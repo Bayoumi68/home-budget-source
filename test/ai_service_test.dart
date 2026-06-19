@@ -44,11 +44,37 @@ void main() {
     });
 
     test('keeps single expense behavior as one parsed item', () {
-      final items = AIService.parseExpenseMessages('دفعت 250 جنيه سوبر ماركت');
+      final items = AIService.parseExpenseMessages(
+        'دفعت 250 جنيه سوبر ماركت',
+      );
 
       expect(items, hasLength(1));
       expect(items.first['amount'], 250);
-      expect(items.first['category'], 'أكل ومشروبات');
+      expect(items.first['category'], 'سوبر ماركت');
+    });
+
+    test('parses category before amount with attached preposition', () {
+      final items = AIService.parseExpenseMessages(
+        'خضار ب100 وكهرباء 200',
+      );
+
+      expect(items, hasLength(2));
+      expect(items[0]['amount'], 100);
+      expect(items[0]['category'], 'خضار');
+      expect(items[1]['amount'], 200);
+      expect(items[1]['category'], 'كهرباء');
+    });
+
+    test('parses mixed category-before and amount-before expense order', () {
+      final items = AIService.parseExpenseMessages(
+        'اشتريت خضار بـ100 جنيه و200 جنيه كهرباء',
+      );
+
+      expect(items, hasLength(2));
+      expect(items[0]['amount'], 100);
+      expect(items[0]['category'], 'خضار');
+      expect(items[1]['amount'], 200);
+      expect(items[1]['category'], 'كهرباء');
     });
   });
 }

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
@@ -23,12 +25,16 @@ class DatabaseService {
   static const _activeUserKey = 'active_user';
   static const _activeGroupKey = 'active_group';
   static const _sessionVersionKey = 'active_app_version';
+  static final _secureRandom = Random.secure();
+  static const _inviteAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
   SharedPreferences? _prefs;
   FirebaseFirestore get _fs => FirebaseFirestore.instance;
 
   CollectionReference<Map<String, dynamic>> get _families =>
       _fs.collection('families');
+  CollectionReference<Map<String, dynamic>> get _inviteCodes =>
+      _fs.collection('inviteCodes');
   CollectionReference<Map<String, dynamic>> _members(String groupId) =>
       _families.doc(groupId).collection('members');
   CollectionReference<Map<String, dynamic>> _messages(String groupId) =>
@@ -41,6 +47,13 @@ class DatabaseService {
       _families.doc(groupId).collection('categories');
   CollectionReference<Map<String, dynamic>> _notifications(String groupId) =>
       _families.doc(groupId).collection('notifications');
+
+  String _newInviteCode() {
+    return List.generate(
+      8,
+      (_) => _inviteAlphabet[_secureRandom.nextInt(_inviteAlphabet.length)],
+    ).join();
+  }
 
   Future<void> _ensurePrefs() async {
     _prefs ??= await SharedPreferences.getInstance();
@@ -111,7 +124,7 @@ class DatabaseService {
     String? adminPhone,
   }) async {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
-    final inviteCode = id.substring(id.length - 6).toUpperCase();
+    final inviteCode = _newInviteCode();
     final admin = UserModel(
       id: adminId,
       name: adminName,
@@ -138,13 +151,26 @@ class DatabaseService {
       ...admin.toMap(),
       'createdAt': DateTime.now().toIso8601String(),
     });
+    await _inviteCodes.doc(inviteCode).set({
+      'groupId': id,
+      'inviteCode': inviteCode,
+      'createdAt': DateTime.now().toIso8601String(),
+      'appVersion': AppConstants.appVersion,
+    });
     await writeDiagnostic('create_group', groupId: id, userId: admin.id);
     return group;
   }
 
   Future<GroupModel?> getGroupByInvite(String code) async {
+    final clean = code.trim().toUpperCase();
+    final inviteDoc = await _inviteCodes.doc(clean).get();
+    final groupId = inviteDoc.data()?['groupId']?.toString();
+    if (groupId != null && groupId.isNotEmpty) {
+      return getGroupById(groupId);
+    }
+
     final q = await _families
-        .where('inviteCode', isEqualTo: code.trim().toUpperCase())
+        .where('inviteCode', isEqualTo: clean)
         .limit(1)
         .get();
     if (q.docs.isEmpty) return null;

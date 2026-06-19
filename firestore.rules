@@ -1,0 +1,99 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function validGroupId(groupId) {
+      return groupId is string && groupId.matches('[A-Za-z0-9_-]{6,80}');
+    }
+
+    function hasGroupField(groupId) {
+      return request.resource.data.groupId == groupId;
+    }
+
+    // Beta-safe diagnostics: clients can write small events, but nobody can read
+    // all diagnostic data from the client.
+    match /diagnostics/{docId} {
+      allow create: if request.resource.data.keys().hasOnly([
+        'event', 'groupId', 'userId', 'appVersion', 'createdAt'
+      ]);
+      allow read, update, delete: if false;
+    }
+
+    // New invite flow: lookup an invite code directly instead of scanning families.
+    match /inviteCodes/{code} {
+      allow get: if code.matches('[A-Z0-9]{6,12}');
+      allow list: if false;
+      allow create, update: if code.matches('[A-Z0-9]{6,12}')
+        && request.resource.data.inviteCode == code
+        && request.resource.data.groupId is string;
+      allow delete: if false;
+    }
+
+    match /families/{groupId} {
+      allow get: if validGroupId(groupId);
+      // Temporary compatibility for old 6-digit invites. New invites use
+      // inviteCodes/{code}, so remove this after all testers update.
+      allow list: if request.query.limit <= 1;
+      allow create, update: if validGroupId(groupId)
+        && request.resource.data.id == groupId
+        && request.resource.data.inviteCode is string
+        && request.resource.data.adminId is string;
+      allow delete: if false;
+
+      match /members/{memberId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && request.resource.data.id == memberId;
+        allow delete: if validGroupId(groupId);
+      }
+
+      match /messages/{messageId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && hasGroupField(groupId)
+          && request.resource.data.id == messageId
+          && request.resource.data.senderId is string
+          && request.resource.data.content is string;
+        allow delete: if validGroupId(groupId);
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && hasGroupField(groupId)
+          && request.resource.data.id == transactionId
+          && request.resource.data.amount is number
+          && request.resource.data.amount > 0;
+        allow delete: if validGroupId(groupId);
+      }
+
+      match /budgets/{budgetId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && request.resource.data.category is string
+          && request.resource.data.limit is number
+          && request.resource.data.limit >= 0;
+        allow delete: if validGroupId(groupId);
+      }
+
+      match /categories/{categoryId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && request.resource.data.name is string;
+        allow delete: if validGroupId(groupId);
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && hasGroupField(groupId)
+          && request.resource.data.id == notificationId;
+        allow delete: if validGroupId(groupId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
