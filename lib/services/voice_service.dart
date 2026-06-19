@@ -24,13 +24,15 @@ class VoiceService {
       return false;
     }
 
-    final permission = await Permission.microphone.request();
-    if (!permission.isGranted) {
-      _lastError = permission.isPermanentlyDenied
-          ? 'إذن الميكروفون مرفوض نهائيًا. افتح إعدادات التطبيق وفعّل الميكروفون.'
-          : 'لم يتم منح إذن الميكروفون للتطبيق.';
-      onError?.call(_lastError!);
-      return false;
+    if (!kIsWeb) {
+      final permission = await Permission.microphone.request();
+      if (!permission.isGranted) {
+        _lastError = permission.isPermanentlyDenied
+            ? 'إذن الميكروفون مرفوض نهائيًا. افتح إعدادات التطبيق وفعّل الميكروفون.'
+            : 'لم يتم منح إذن الميكروفون للتطبيق.';
+        onError?.call(_lastError!);
+        return false;
+      }
     }
 
     _speech ??= stt.SpeechToText();
@@ -142,7 +144,9 @@ class VoiceService {
     if (lower.contains('no-speech')) {
       return 'لم أسمع كلام واضح. قرّب الهاتف وتكلم مرة أخرى أو اكتب المصروف.';
     }
-    return error.isEmpty ? 'حدثت مشكلة في الصوت. اكتب الرسالة أو جرّب مرة أخرى.' : error;
+    return error.isEmpty
+        ? 'حدثت مشكلة في الصوت. اكتب الرسالة أو جرّب مرة أخرى.'
+        : error;
   }
 
   Future<void> stopListening() async {

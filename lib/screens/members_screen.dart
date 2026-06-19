@@ -292,7 +292,7 @@ class _MembersScreenState extends State<MembersScreen> {
 
     if (saved == true) {
       final name = nameController.text.trim();
-      final phone = phoneController.text.replaceAll(RegExp(r'[^0-9+]'), '');
+      final phone = _authService.normalizePhone(phoneController.text);
       if (name.isEmpty || phone.length < 8) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

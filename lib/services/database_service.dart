@@ -9,6 +9,7 @@ import '../models/budget_model.dart';
 import '../models/group_model.dart';
 import '../models/family_notification_model.dart';
 import '../config/constants.dart';
+import '../services/auth_service.dart';
 import '../utils/category_utils.dart';
 
 /// V4 Firebase-backed storage.
@@ -27,6 +28,7 @@ class DatabaseService {
   static const _sessionVersionKey = 'active_app_version';
   static final _secureRandom = Random.secure();
   static const _inviteAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  final _authService = AuthService();
 
   SharedPreferences? _prefs;
   FirebaseFirestore get _fs => FirebaseFirestore.instance;
@@ -169,10 +171,8 @@ class DatabaseService {
       return getGroupById(groupId);
     }
 
-    final q = await _families
-        .where('inviteCode', isEqualTo: clean)
-        .limit(1)
-        .get();
+    final q =
+        await _families.where('inviteCode', isEqualTo: clean).limit(1).get();
     if (q.docs.isEmpty) return null;
     return GroupModel.fromMap(q.docs.first.data());
   }
@@ -184,19 +184,26 @@ class DatabaseService {
   }
 
   Future<void> joinGroup(String groupId, UserModel user) async {
-    final normalizedPhone = user.phone?.trim();
+    final normalizedPhone =
+        user.phone == null ? null : _authService.normalizePhone(user.phone!);
     final prepared = normalizedPhone == null || normalizedPhone.isEmpty
         ? null
         : await getMemberByPhone(groupId, normalizedPhone);
-    final toSave = prepared == null
+    final userToMerge = normalizedPhone == null || normalizedPhone.isEmpty
         ? user
+        : user.copyWith(phone: normalizedPhone);
+    final toSave = prepared == null
+        ? userToMerge
         : prepared.copyWith(
-            id: user.id,
-            name: user.name.isEmpty ? prepared.name : user.name,
-            phone: user.phone ?? prepared.phone);
+            id: userToMerge.id,
+            name: userToMerge.name.isEmpty ? prepared.name : userToMerge.name,
+            phone: userToMerge.phone ?? prepared.phone);
     await _members(groupId)
         .doc(toSave.id)
         .set(toSave.toMap(), SetOptions(merge: true));
+    if (prepared != null && prepared.id != toSave.id) {
+      await _members(groupId).doc(prepared.id).delete();
+    }
   }
 
   // ─── Members ───
@@ -212,14 +219,36 @@ class DatabaseService {
   }
 
   Future<UserModel?> getMemberByPhone(String groupId, String phone) async {
-    final normalized = phone.trim();
-    if (normalized.isEmpty) return null;
-    final q = await _members(groupId)
-        .where('phone', isEqualTo: normalized)
-        .limit(1)
-        .get();
-    if (q.docs.isEmpty) return null;
-    return UserModel.fromMap(q.docs.first.data());
+    final candidates = _phoneLookupCandidates(phone);
+    if (candidates.isEmpty) return null;
+    for (final candidate in candidates) {
+      final q = await _members(groupId)
+          .where('phone', isEqualTo: candidate)
+          .limit(1)
+          .get();
+      if (q.docs.isNotEmpty) return UserModel.fromMap(q.docs.first.data());
+    }
+    return null;
+  }
+
+  List<String> _phoneLookupCandidates(String phone) {
+    final raw = phone.trim();
+    if (raw.isEmpty) return const [];
+    final normalized = _authService.normalizePhone(raw);
+    final compact = raw.replaceAll(RegExp(r'[^0-9+]'), '');
+    final candidates = <String>[
+      normalized,
+      raw,
+      compact,
+    ];
+    if (normalized.startsWith('+20') && normalized.length > 3) {
+      final withoutCountry = normalized.substring(3);
+      candidates.add(withoutCountry);
+      candidates.add('0$withoutCountry');
+      candidates.add('20$withoutCountry');
+      candidates.add('0020$withoutCountry');
+    }
+    return candidates.where((p) => p.trim().isNotEmpty).toSet().toList();
   }
 
   Future<void> updateMemberLimit(
