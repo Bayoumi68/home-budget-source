@@ -282,7 +282,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 const SizedBox(height: 28),
                 _whiteField(_nameController, 'اسمك'),
                 const SizedBox(height: 12),
-                _whiteField(_phoneController, 'رقم الموبايل',
+                _whiteField(_phoneController, 'رقم الموبايل 010... أو +20...',
                     keyboardType: TextInputType.phone, rtl: false),
                 if (inviteMode) ...[
                   const SizedBox(height: 12),

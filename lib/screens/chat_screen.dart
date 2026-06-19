@@ -439,8 +439,8 @@ class _ChatScreenState extends State<ChatScreen> {
             if (_voiceText.trim().isNotEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                    content: Text(
-                        'راجع الكلام المكتوب ثم اضغط سهم الإرسال للحفظ.')),
+                    content:
+                        Text('راجع الكلام المكتوب ثم اضغط سهم الإرسال للحفظ.')),
               );
             }
           }
@@ -760,7 +760,8 @@ class _ChatScreenState extends State<ChatScreen> {
           if (_isSending ||
               _isSyncingFamilyData ||
               _isRecording ||
-              _isPreparingVoice)
+              _isPreparingVoice ||
+              budget.loading)
             Container(
               width: double.infinity,
               color: AppTheme.systemMessage,
@@ -773,11 +774,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Text(
                       _isSending
                           ? 'جاري حفظ المصروف ومزامنته مع العائلة...'
-                          : _isPreparingVoice
-                              ? 'جاري تجهيز التسجيل الصوتي...'
-                              : _isRecording
-                                  ? 'استمر ضاغطًا وتكلم، وارفع صباعك عند الانتهاء.'
-                                  : 'جاري تحديث بيانات العائلة...',
+                          : budget.loading
+                              ? 'جاري حفظ حدود المصروفات...'
+                              : _isPreparingVoice
+                                  ? 'جاري تجهيز التسجيل الصوتي...'
+                                  : _isRecording
+                                      ? 'استمر ضاغطًا وتكلم، وارفع صباعك عند الانتهاء.'
+                                      : 'جاري تحديث بيانات العائلة...',
                       textDirection: ui.TextDirection.rtl,
                       style: const TextStyle(
                         fontSize: 12,
@@ -874,7 +877,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 : () => unawaited(_finishVoiceRecordingAndConfirm()),
             isRecording: _isRecording,
             isSending: _isSending,
-            enabled: user?.canAddExpenses != false,
+            enabled: user?.canAddExpenses != false && !budget.loading,
             onChanged: _updateParsedPreview,
           ),
         ],
@@ -916,10 +919,6 @@ class _QuickExpenseHints extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hints = [
-      'دفعت 250 سوبر ماركت',
-      'بنزين 300 جنيه',
-      'دخل 12000 مرتب',
-      'ميزانية الشهر',
       'تقرير آخر أسبوع',
     ];
     return Container(

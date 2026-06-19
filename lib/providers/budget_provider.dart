@@ -65,7 +65,9 @@ class BudgetProvider extends ChangeNotifier {
 
     final combined = '${t.category} ${t.note ?? ''}';
     final sorted = _expenseCategories
-        .where((c) => c.trim().isNotEmpty && CategoryUtils.key(c) != CategoryUtils.key('أخرى'))
+        .where((c) =>
+            c.trim().isNotEmpty &&
+            CategoryUtils.key(c) != CategoryUtils.key('أخرى'))
         .toList()
       ..sort((a, b) => b.length.compareTo(a.length));
     for (final cat in sorted) {
@@ -75,15 +77,30 @@ class BudgetProvider extends ChangeNotifier {
   }
 
   Future<void> setBudget(String groupId, String category, double limit) async {
-    await _db.setBudget(groupId, category, limit);
-    _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
-    _budgets = await _db.getBudgetsSync(groupId);
+    _loading = true;
     notifyListeners();
+    try {
+      await _db.setBudget(groupId, category, limit);
+      _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
+      _budgets = await _db.getBudgetsSync(groupId);
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
   }
 
-  Future<void> addExpenseCategory(String groupId, String category, {double? limit}) async {
-    await _db.addExpenseCategory(groupId, category, limit: limit);
-    await refreshData(groupId);
+  Future<void> addExpenseCategory(String groupId, String category,
+      {double? limit}) async {
+    _loading = true;
+    notifyListeners();
+    try {
+      await _db.addExpenseCategory(groupId, category, limit: limit);
+      _transactions = await _db.getTransactionsSync(groupId);
+      _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
+      _budgets = await _db.getBudgetsSync(groupId);
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
   }
-
 }

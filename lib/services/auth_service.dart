@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 class AuthService {
   final _uuid = const Uuid();
   final _random = Random.secure();
+  static const defaultCountryCode = '+20';
 
   // Simulated user creation — no Firebase needed yet.
   String createUserId() => _uuid.v4();
@@ -11,6 +12,11 @@ class AuthService {
   String normalizePhone(String input) {
     var phone = input.replaceAll(RegExp(r'[^0-9+]'), '');
     if (phone.startsWith('00')) phone = '+${phone.substring(2)}';
+    if (phone.startsWith('+')) return phone;
+    if (phone.startsWith('0') && phone.length >= 10) {
+      return '$defaultCountryCode${phone.substring(1)}';
+    }
+    if (phone.length >= 8) return '$defaultCountryCode$phone';
     return phone;
   }
 

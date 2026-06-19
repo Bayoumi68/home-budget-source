@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
 import '../config/theme.dart';
 import '../config/constants.dart';
+import '../models/transaction_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/budget_provider.dart';
@@ -21,6 +23,7 @@ class GroupSettingsScreen extends StatefulWidget {
 
 class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   final _db = DatabaseService();
+  final _uuid = const Uuid();
 
   @override
   void initState() {
@@ -29,8 +32,9 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
       if (!mounted) return;
       await context.read<BudgetProvider>().refreshData(widget.groupId);
       await _db.recalculateBudgetsForCurrentMonth(widget.groupId);
-      if (mounted)
+      if (mounted) {
         await context.read<BudgetProvider>().refreshData(widget.groupId);
+      }
     });
   }
 
@@ -70,10 +74,71 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
       ),
     );
     if (amount != null && amount >= 0) {
-      await _db.setBudget(widget.groupId, category, amount);
-      if (mounted)
-        await context.read<BudgetProvider>().refreshData(widget.groupId);
+      if (mounted) {
+        await context
+            .read<BudgetProvider>()
+            .setBudget(widget.groupId, category, amount);
+      }
     }
+  }
+
+  Future<void> _showSetMonthlyIncomeDialog() async {
+    final controller = TextEditingController();
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تسجيل الدخل الشهري'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          textDirection: ui.TextDirection.ltr,
+          decoration: const InputDecoration(
+            hintText: 'المبلغ بالجنيه',
+            prefixIcon: Icon(Icons.payments_rounded),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              ctx,
+              double.tryParse(controller.text.trim().replaceAll(',', '.')),
+            ),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (amount == null || amount <= 0 || !mounted) return;
+
+    final auth = context.read<AuthProvider>();
+    final user = auth.user;
+    if (user == null) return;
+
+    final budgetProvider = context.read<BudgetProvider>();
+    await _db.addTransaction(
+      TransactionModel(
+        id: _uuid.v4(),
+        groupId: widget.groupId,
+        userId: user.id,
+        userName: user.name,
+        amount: amount,
+        category: 'دخل شهري',
+        isExpense: false,
+        note: 'تم تسجيله من الإعدادات',
+      ),
+    );
+    await budgetProvider.refreshData(widget.groupId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content:
+              Text('تم تسجيل دخل شهري بقيمة ${amount.toStringAsFixed(0)} ج')),
+    );
   }
 
   Future<void> _showAddCategoryDialog() async {
@@ -132,11 +197,11 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
       ),
     );
     if (result == null) return;
+    if (!mounted) return;
     final name = result['name'] as String;
     final limit = result['limit'] as double?;
-    await context
-        .read<BudgetProvider>()
-        .addExpenseCategory(widget.groupId, name, limit: limit);
+    final budgetProvider = context.read<BudgetProvider>();
+    await budgetProvider.addExpenseCategory(widget.groupId, name, limit: limit);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('تمت إضافة نوع المصروف: $name')),
@@ -193,7 +258,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   }
 
   Future<void> _shareAppTrialLink() async {
-    final message = 'جرّب Budget Home من أي موبايل أو كمبيوتر:\n'
+    const message = 'جرّب Budget Home من أي موبايل أو كمبيوتر:\n'
         '${AppConstants.appWebLink}?reset=1\n\n'
         'بعد الفتح اكتب اسمك ورقمك واختر إنشاء عائلة جديدة، ثم ابعت كود الدعوة لأسرتك.';
     await Clipboard.setData(ClipboardData(text: message));
@@ -224,13 +289,15 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         actions: [
           IconButton(
             tooltip: 'إعادة حساب الحدود',
-            onPressed: () async {
-              await _db.recalculateBudgetsForCurrentMonth(widget.groupId);
-              if (mounted)
-                await context
-                    .read<BudgetProvider>()
-                    .refreshData(widget.groupId);
-            },
+            onPressed: budget.loading
+                ? null
+                : () async {
+                    final budgetProvider = context.read<BudgetProvider>();
+                    await _db.recalculateBudgetsForCurrentMonth(widget.groupId);
+                    if (mounted) {
+                      await budgetProvider.refreshData(widget.groupId);
+                    }
+                  },
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
@@ -238,6 +305,15 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (budget.loading) ...[
+            const LinearProgressIndicator(minHeight: 3),
+            const SizedBox(height: 8),
+            const Text(
+              'جاري حفظ التغييرات... انتظر لحظة قبل تسجيل مصروف جديد.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+          ],
           Card(
             child: ListTile(
               leading: const Icon(Icons.cloud_done_rounded,
@@ -302,6 +378,17 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.payments_rounded,
+                  color: AppTheme.incomeGreen),
+              title: const Text('الدخل الشهري'),
+              subtitle: const Text('سجل دخل الشهر من هنا بدل اقتراحات الشات.'),
+              trailing: const Icon(Icons.edit_rounded),
+              onTap: budget.loading ? null : _showSetMonthlyIncomeDialog,
+            ),
+          ),
+          const SizedBox(height: 16),
           Row(
             children: [
               const Expanded(
@@ -311,7 +398,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
               ),
               IconButton.filledTonal(
                 tooltip: 'إضافة نوع مصروف',
-                onPressed: _showAddCategoryDialog,
+                onPressed: budget.loading ? null : _showAddCategoryDialog,
                 icon: const Icon(Icons.add_rounded),
               ),
             ],
@@ -370,8 +457,9 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                     : Text(
                         'لا يوجد حد محدد — المصروف هذا الشهر ${spent.toStringAsFixed(0)} ج'),
                 trailing: TextButton(
-                  onPressed:
-                      canManageBudgets ? () => _showSetBudgetDialog(cat) : null,
+                  onPressed: canManageBudgets && !budget.loading
+                      ? () => _showSetBudgetDialog(cat)
+                      : null,
                   child: const Text('تحديد حد'),
                 ),
               ),
