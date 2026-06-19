@@ -258,9 +258,13 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   }
 
   Future<void> _shareAppTrialLink() async {
-    const message = 'جرّب Budget Home من أي موبايل أو كمبيوتر:\n'
-        '${AppConstants.appWebLink}?reset=1\n\n'
-        'بعد الفتح اكتب اسمك ورقمك واختر إنشاء عائلة جديدة، ثم ابعت كود الدعوة لأسرتك.';
+    final trialUrl =
+        '${AppConstants.appWebLink}/install.html?mode=newFamily&reset=1&v=${Uri.encodeComponent(AppConstants.appVersion)}';
+    final message = 'جرّب Budget Home وأنشئ عائلتك أنت\n\n'
+        'افتح الرابط التالي:\n$trialUrl\n\n'
+        'أندرويد: حمّل وثبّت APK من الصفحة.\n'
+        'آيفون: افتح نسخة الويب من نفس الصفحة بدون تثبيت.\n\n'
+        'هذا الرابط للتجربة وإنشاء عائلة جديدة، وليس للانضمام لعائلتنا.';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =
         Uri.parse('https://wa.me/?text=${Uri.encodeComponent(message)}');

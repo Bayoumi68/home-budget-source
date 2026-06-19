@@ -49,6 +49,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSending = false;
   bool _isSyncingFamilyData = false;
   bool _isPreparingVoice = false;
+  bool _isConfirmingVoice = false;
+  bool _handlingInviteLink = false;
   Timer? _familyRefreshTimer;
   StreamSubscription<Uri>? _deepLinkSub;
   NotificationProvider? _notificationProvider;
@@ -116,15 +118,21 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _listenForInviteLinks() async {
     try {
       _deepLinkSub = _appLinks.uriLinkStream.listen((uri) async {
-        if (!_hasInvite(uri) || !mounted) return;
-        await context.read<AuthProvider>().signOut();
-        if (!mounted) return;
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          '/auth',
-          (_) => false,
-          arguments: {'inviteUri': uri.toString()},
-        );
+        if (!_hasInvite(uri) || !mounted || _handlingInviteLink) return;
+        _handlingInviteLink = true;
+        try {
+          final auth = context.read<AuthProvider>();
+          await auth.signOut();
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/auth',
+            (_) => false,
+            arguments: {'inviteUri': uri.toString()},
+          );
+        } finally {
+          _handlingInviteLink = false;
+        }
       });
     } catch (_) {
       // Splash/Auth still handle cold-start invite links.
@@ -247,6 +255,7 @@ class _ChatScreenState extends State<ChatScreen> {
             .showSnackBar(SnackBar(content: Text(warning)));
       }
     } finally {
+      _voiceText = '';
       if (mounted) setState(() => _isSending = false);
     }
     _scrollToBottom();
@@ -367,6 +376,45 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _shareAppInvite() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(
+                title: Text('مشاركة Budget Home'),
+                subtitle: Text('اختار نوع الرسالة قبل فتح واتساب.'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.group_add_rounded),
+                title: const Text('دعوة فرد للانضمام لعائلتنا'),
+                subtitle: const Text('يرسل رابط فيه كود العائلة الحالية.'),
+                onTap: () => Navigator.pop(ctx, 'family'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.public_rounded),
+                title: const Text('رابط تجربة وإنشاء عائلة جديدة'),
+                subtitle:
+                    const Text('يرسل رابط بدون كود دعوة، فينشئ عائلته هو.'),
+                onTap: () => Navigator.pop(ctx, 'trial'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (choice == 'family') {
+      await _shareFamilyInvite();
+    } else if (choice == 'trial') {
+      await _shareNewFamilyTrial();
+    }
+  }
+
+  Future<void> _shareFamilyInvite() async {
     final auth = context.read<AuthProvider>();
     final code = auth.group?.inviteCode;
     final groupId = auth.group?.id ?? widget.groupId;
@@ -393,8 +441,31 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _shareNewFamilyTrial() async {
+    final installUrl =
+        '${AppConstants.appWebLink}/install.html?mode=newFamily&reset=1&v=${Uri.encodeComponent(AppConstants.appVersion)}';
+    final message = 'جرّب Budget Home وأنشئ عائلتك أنت\n\n'
+        'افتح الرابط التالي:\n$installUrl\n\n'
+        'أندرويد: حمّل وثبّت APK من الصفحة.\n'
+        'آيفون: افتح نسخة الويب من نفس الصفحة بدون تثبيت.\n\n'
+        'هذا الرابط للتجربة وإنشاء عائلة جديدة، وليس للانضمام لعائلتنا.';
+    await Clipboard.setData(ClipboardData(text: message));
+    final uri =
+        Uri.parse('https://wa.me/?text=${Uri.encodeComponent(message)}');
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication)
+        .catchError((_) => false);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('تم نسخ رابط التجربة. افتح واتساب والصقه لمن تريد.')),
+      );
+    }
+  }
+
   Future<void> _startRecording() async {
-    if (_isRecording || _isSending || _isPreparingVoice) return;
+    if (_isRecording || _isSending || _isPreparingVoice || _isConfirmingVoice) {
+      return;
+    }
     final available = await _voiceService.initialize(
       onError: (error) {
         if (mounted) {
@@ -472,26 +543,35 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _finishVoiceRecordingAndConfirm() async {
+    if (_isConfirmingVoice) return;
     if (!_isRecording && _voiceText.trim().isEmpty) return;
-    await _voiceService.stopListening();
-    if (mounted) {
-      setState(() {
-        _isRecording = false;
-        _isPreparingVoice = true;
-      });
+    _isConfirmingVoice = true;
+    try {
+      await _voiceService.stopListening();
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+          _isPreparingVoice = true;
+        });
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final text = _voiceText.trim();
+      if (!mounted) return;
+      setState(() => _isPreparingVoice = false);
+      if (text.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('لم أسمع كلام واضح. اضغط مطولًا وتكلم مرة أخرى.')),
+        );
+        return;
+      }
+      await _confirmVoiceText(text);
+    } finally {
+      if (mounted) {
+        setState(() => _isPreparingVoice = false);
+      }
+      _isConfirmingVoice = false;
     }
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    final text = _voiceText.trim();
-    if (!mounted) return;
-    setState(() => _isPreparingVoice = false);
-    if (text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('لم أسمع كلام واضح. اضغط مطولًا وتكلم مرة أخرى.')),
-      );
-      return;
-    }
-    await _confirmVoiceText(text);
   }
 
   Future<void> _confirmVoiceText(String text) async {
@@ -535,6 +615,11 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
     if (ok == true) {
+      _voiceText = '';
+      _textController.clear();
+      if (mounted) {
+        setState(() => _lastParsedPreview = null);
+      }
       await _sendMessage(clean, true);
     } else {
       _putTextInInput(clean);
@@ -660,7 +745,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'دعوة فرد للعائلة',
+            tooltip: 'مشاركة التطبيق / دعوة فرد',
             icon: const Icon(Icons.ios_share_rounded),
             onPressed: _shareAppInvite,
           ),

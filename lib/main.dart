@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,13 +16,80 @@ import 'screens/auth_screen.dart';
 import 'screens/chat_screen.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-  FirebaseFirestore.instance.settings =
-      const Settings(persistenceEnabled: true);
-  runApp(const BudgetHomeApp());
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    ErrorWidget.builder = (details) => AppStartupError(
+          message: details.exceptionAsString(),
+        );
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+    };
+
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      FirebaseFirestore.instance.settings =
+          const Settings(persistenceEnabled: true);
+      runApp(const BudgetHomeApp());
+    } catch (e) {
+      runApp(AppStartupError(message: e.toString()));
+    }
+  }, (error, stack) {
+    FlutterError.reportError(
+      FlutterErrorDetails(exception: error, stack: stack),
+    );
+  });
+}
+
+class AppStartupError extends StatelessWidget {
+  final String message;
+  const AppStartupError({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          backgroundColor: const Color(0xFFF6F2EA),
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline_rounded,
+                        size: 54, color: Colors.red),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'حدثت مشكلة في فتح Budget Home',
+                      textAlign: TextAlign.center,
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'اقفل التطبيق وافتحه مرة أخرى. لو أنت على iPhone جرّب تحديث Safari أو افتح الرابط في Chrome.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    SelectableText(
+                      message,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class BudgetHomeApp extends StatelessWidget {

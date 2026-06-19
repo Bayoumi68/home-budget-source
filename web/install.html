@@ -30,14 +30,21 @@
   const params = new URLSearchParams(location.search);
   const code = params.get('invite') || params.get('code') || '';
   const hasInvite = code || params.get('groupId') || params.get('familyId');
+  const newFamilyMode = !hasInvite && (params.get('mode') === 'newFamily' || params.get('reset') === '1');
   const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isAndroid = /android/i.test(navigator.userAgent);
   const webParams = new URLSearchParams(params);
   webParams.set('web', '1');
   document.getElementById('webBtn').href = '/?' + webParams.toString();
-  document.getElementById('title').textContent = hasInvite ? 'Budget Home — دعوة عائلية' : 'Budget Home — تثبيت التطبيق';
+  document.getElementById('title').textContent = hasInvite
+    ? 'Budget Home — دعوة عائلية'
+    : newFamilyMode
+      ? 'Budget Home — تجربة وإنشاء عائلة جديدة'
+      : 'Budget Home — تثبيت التطبيق';
   document.getElementById('desc').textContent = hasInvite
     ? 'أندرويد يمكنه تثبيت التطبيق. آيفون لا يثبت APK، استخدم نسخة الويب من الزر المخصص.'
+    : newFamilyMode
+      ? 'هذا الرابط للتجربة فقط. بعد الفتح اكتب اسمك ورقمك واختر إنشاء عائلة جديدة.'
     : 'على أندرويد ثبّت التطبيق. على آيفون افتح نسخة الويب بدون تثبيت.';
   document.getElementById('platformNote').textContent = isiOS
     ? 'تم اكتشاف iPhone: لا يمكن تثبيت APK على آيفون. افتح نسخة الويب وستدخل بنفس دعوة العائلة.'
@@ -47,6 +54,11 @@
   if (isiOS) {
     document.getElementById('androidBtn').style.display = 'none';
     document.getElementById('openBtn').style.display = 'none';
+  }
+  if (!hasInvite) {
+    document.getElementById('openBtn').style.display = 'none';
+    document.getElementById('codeBox').previousElementSibling.style.display = 'none';
+    document.getElementById('codeBox').style.display = 'none';
   }
   document.getElementById('codeBox').textContent = code || 'لا يوجد كود في الرابط';
   function openInvite(){
