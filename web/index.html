@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Budget Home - family budget manager">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Budget Home">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="manifest" href="manifest.json">
+  <title>Budget Home</title>
+  <style>
+    body{margin:0;background:#053f38;color:white;font-family:Arial,Tahoma,sans-serif}
+    #boot-message{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box}
+    #boot-message small{display:block;margin-top:10px;color:#d8ece7;line-height:1.7}
+  </style>
+</head>
+<body>
+  <div id="boot-message">
+    <div>
+      <strong>Budget Home</strong>
+      <small>جاري فتح التطبيق...</small>
+    </div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    if ((params.has('invite') || params.has('code') || params.has('groupId') || params.has('familyId')) && !params.has('web') && !location.pathname.endsWith('/install.html')) {
+      location.replace('/install.html' + location.search);
+    }
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations()
+        .then((items) => items.forEach((item) => item.unregister()))
+        .catch(() => {});
+    }
+    if ('caches' in window) {
+      caches.keys()
+        .then((keys) => keys.forEach((key) => caches.delete(key)))
+        .catch(() => {});
+    }
+    window.addEventListener('flutter-first-frame', () => {
+      document.getElementById('boot-message')?.remove();
+    });
+    window.addEventListener('error', () => {
+      const box = document.getElementById('boot-message');
+      if (!box) return;
+      box.innerHTML = '<div><strong>تعذر فتح التطبيق</strong><small>اضغط تحديث الصفحة. إذا استمرت الشاشة السوداء افتح الرابط في Safari وامسح بيانات الموقع.</small></div>';
+    });
+    setTimeout(() => {
+      const box = document.getElementById('boot-message');
+      if (!box) return;
+      box.innerHTML = '<div><strong>Budget Home</strong><small>لو ظلت الشاشة هنا، اضغط تحديث الصفحة مرة واحدة. بعض أجهزة iPhone تحتاج مسح كاش الموقع بعد التحديث.</small></div>';
+    }, 12000);
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+name: budget_home
+description: AI-powered family budget manager with chat-first interface.
+publish_to: 'none'
+version: 1.0.3+2003
+
+environment:
+  sdk: ^3.2.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  provider: ^6.1.1
+  speech_to_text: 7.4.0
+  permission_handler: ^11.3.0
+  intl: ^0.19.0
+  fl_chart: ^0.66.0
+  uuid: ^4.2.1
+  shared_preferences: ^2.2.2
+  url_launcher: ^6.3.1
+  image_picker: ^1.1.2
+  cloud_firestore: ^5.6.0
+  firebase_core: ^3.10.0
+  app_links: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true

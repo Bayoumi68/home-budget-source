@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>تثبيت Budget Home</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ثبّت تطبيق Budget Home APK وافتح دعوة العائلة مباشرة داخل التطبيق.">
+  <meta property="og:title" content="تثبيت Budget Home">
+  <meta property="og:description" content="تحميل APK ثم فتح دعوة العائلة داخل التطبيق.">
+  <meta property="og:type" content="website">
+  <style>
+    body{font-family:Arial,Tahoma,sans-serif;background:#f6f2ea;color:#053f38;margin:0;padding:22px}
+    .card{max-width:520px;margin:auto;background:white;border-radius:18px;padding:22px;box-shadow:0 4px 18px #0002}
+    h1{font-size:24px;margin-top:0}.btn{display:block;width:100%;box-sizing:border-box;text-align:center;margin:12px 0;padding:14px 16px;border-radius:14px;text-decoration:none;border:0;font-size:18px;font-weight:bold}
+    .download{background:#087464;color:white}.open{background:#d9b45b;color:#173c35}.web{background:#173c35;color:white}.note{font-size:14px;color:#555;line-height:1.7}.warn{background:#fff5d8;border-radius:12px;padding:10px;color:#5b4100} code{direction:ltr;display:block;background:#eee;padding:10px;border-radius:10px;overflow-wrap:anywhere}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="title">Budget Home — تثبيت التطبيق</h1>
+    <p class="note" id="desc">ثبّت التطبيق أولًا، وبعد التثبيت ارجع لهذه الصفحة واضغط فتح الدعوة في التطبيق.</p>
+    <a id="androidBtn" class="btn download" href="/download.html" target="_blank" rel="noopener">تحميل وتثبيت Android APK</a>
+    <button id="openBtn" class="btn open" onclick="openInvite()">فتح الدعوة في تطبيق أندرويد</button>
+    <a id="webBtn" class="btn web" href="/">فتح نسخة الويب للآيفون أو بدون تثبيت</a>
+    <p id="platformNote" class="note warn"></p>
+    <p class="note">لو زر الفتح لم يعمل، افتح التطبيق يدويًا واكتب كود الدعوة التالي:</p>
+    <code id="codeBox"></code>
+  </div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const code = params.get('invite') || params.get('code') || '';
+  const hasInvite = code || params.get('groupId') || params.get('familyId');
+  const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isAndroid = /android/i.test(navigator.userAgent);
+  const webParams = new URLSearchParams(params);
+  webParams.set('web', '1');
+  document.getElementById('webBtn').href = '/?' + webParams.toString();
+  document.getElementById('title').textContent = hasInvite ? 'Budget Home — دعوة عائلية' : 'Budget Home — تثبيت التطبيق';
+  document.getElementById('desc').textContent = hasInvite
+    ? 'أندرويد يمكنه تثبيت التطبيق. آيفون لا يثبت APK، استخدم نسخة الويب من الزر المخصص.'
+    : 'على أندرويد ثبّت التطبيق. على آيفون افتح نسخة الويب بدون تثبيت.';
+  document.getElementById('platformNote').textContent = isiOS
+    ? 'تم اكتشاف iPhone: لا يمكن تثبيت APK على آيفون. افتح نسخة الويب وستدخل بنفس دعوة العائلة.'
+    : isAndroid
+      ? 'تم اكتشاف Android: التحميل الآن ملف APK مباشر. إذا منع الهاتف التثبيت، فعّل السماح بالتثبيت من المتصفح لهذا الملف.'
+      : 'لو جهازك iPhone استخدم نسخة الويب. لو Android استخدم زر تحميل APK.';
+  if (isiOS) {
+    document.getElementById('androidBtn').style.display = 'none';
+    document.getElementById('openBtn').style.display = 'none';
+  }
+  document.getElementById('codeBox').textContent = code || 'لا يوجد كود في الرابط';
+  function openInvite(){
+    const name = encodeURIComponent(params.get('name') || '');
+    const phone = encodeURIComponent(params.get('phone') || '');
+    const groupId = encodeURIComponent(params.get('groupId') || params.get('familyId') || '');
+    location.href = `budgethome://join?invite=${encodeURIComponent(code)}&groupId=${groupId}&name=${name}&phone=${phone}&auto=1`;
+  }
+</script>
+</body>
+</html>

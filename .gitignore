@@ -1,0 +1,32 @@
+# Budget Home
+
+# Flutter
+build/
+.dart_tool/
+.firebase/
+.idea/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Android
+android/.gradle/
+android/app/build/
+android/local.properties
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+lib/config/firebase_options.dart
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
