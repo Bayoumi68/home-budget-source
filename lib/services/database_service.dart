@@ -411,7 +411,13 @@ class DatabaseService {
   Future<List<String>> getExpenseCategoriesSync(String groupId) async {
     final q = await _categories(groupId).orderBy('createdAt').get();
     final bq = await _budgets(groupId).get();
+    final hiddenKeys = q.docs
+        .where((d) => d.data()['hidden'] == true)
+        .map((d) => _categoryKey((d.data()['name'] ?? d.id).toString()))
+        .where((key) => key.isNotEmpty)
+        .toSet();
     final saved = q.docs
+        .where((d) => d.data()['hidden'] != true)
         .map((d) => (d.data()['name'] ?? '').toString().trim())
         .where((name) => name.isNotEmpty)
         .toList();
@@ -427,7 +433,9 @@ class DatabaseService {
       ...budgetNames
     ]) {
       final key = _categoryKey(name);
-      if (key.isEmpty || seen.contains(key)) continue;
+      if (key.isEmpty || seen.contains(key) || hiddenKeys.contains(key)) {
+        continue;
+      }
       seen.add(key);
       result.add(name);
     }
@@ -445,6 +453,18 @@ class DatabaseService {
     if (limit != null && limit >= 0) {
       await setBudget(groupId, clean, limit);
     }
+  }
+
+  Future<void> removeExpenseCategory(String groupId, String category) async {
+    final clean = category.trim();
+    if (clean.isEmpty) return;
+    final id = _docSafeId(clean);
+    await _categories(groupId).doc(id).set({
+      'name': clean,
+      'hidden': true,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+    await _budgets(groupId).doc(id).delete();
   }
 
   Future<List<BudgetModel>> getBudgetsSync(String groupId) async {
@@ -475,11 +495,9 @@ class DatabaseService {
   Future<void> _ensureCategoryStored(String groupId, String category) async {
     final clean = category.trim();
     if (clean.isEmpty) return;
-    final key = _categoryKey(clean);
-    if (AppConstants.expenseCategories.any((name) => _categoryKey(name) == key))
-      return;
     await _categories(groupId).doc(_docSafeId(clean)).set({
       'name': clean,
+      'hidden': false,
       'createdAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
   }

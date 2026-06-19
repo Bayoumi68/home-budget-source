@@ -208,6 +208,33 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     );
   }
 
+  Future<void> _removeCategory(String category) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('إزالة $category؟'),
+        content: const Text(
+          'سيختفي هذا النوع من الاختيارات والقاموس، وسيتم حذف حده الشهري فقط. المصروفات القديمة ستظل محفوظة في السجلات.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('إزالة')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final budgetProvider = context.read<BudgetProvider>();
+    await budgetProvider.removeExpenseCategory(widget.groupId, category);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تمت إزالة نوع المصروف: $category')),
+    );
+  }
+
   Future<void> _shareInviteOnWhatsApp() async {
     final auth = context.read<AuthProvider>();
     final code = auth.group?.inviteCode;
@@ -461,11 +488,22 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                       )
                     : Text(
                         'لا يوجد حد محدد — المصروف هذا الشهر ${spent.toStringAsFixed(0)} ج'),
-                trailing: TextButton(
-                  onPressed: canManageBudgets && !budget.loading
-                      ? () => _showSetBudgetDialog(cat)
-                      : null,
-                  child: const Text('تحديد حد'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: 'إزالة النوع',
+                      onPressed:
+                          budget.loading ? null : () => _removeCategory(cat),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                    TextButton(
+                      onPressed: canManageBudgets && !budget.loading
+                          ? () => _showSetBudgetDialog(cat)
+                          : null,
+                      child: const Text('تحديد حد'),
+                    ),
+                  ],
                 ),
               ),
             );

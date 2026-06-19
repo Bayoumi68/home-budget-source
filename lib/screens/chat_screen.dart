@@ -487,7 +487,11 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _voiceText = '';
-    setState(() => _isRecording = true);
+    _textController.clear();
+    setState(() {
+      _isRecording = true;
+      _lastParsedPreview = null;
+    });
     try {
       await _voiceService.startListening(
         (result, isFinal) {
@@ -508,13 +512,6 @@ class _ChatScreenState extends State<ChatScreen> {
         onStatus: (status) {
           if ((status == 'done' || status == 'notListening') && mounted) {
             setState(() => _isRecording = false);
-            if (_voiceText.trim().isNotEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content:
-                        Text('راجع الكلام المكتوب ثم اضغط سهم الإرسال للحفظ.')),
-              );
-            }
           }
         },
       );
@@ -523,22 +520,6 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _isRecording = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('تعذر بدء التسجيل الصوتي: $e')),
-      );
-    }
-  }
-
-  Future<void> _stopRecording() async {
-    await _voiceService.stopListening();
-    setState(() => _isRecording = false);
-    if (_voiceText.trim().isNotEmpty && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('راجع الكلام المكتوب ثم اضغط سهم الإرسال للحفظ.')),
-      );
-    } else if (_voiceText.trim().isEmpty && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('لم أسمع كلام واضح. جرّب مرة أخرى أو اكتب المصروف.')),
       );
     }
   }
@@ -951,7 +932,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       const SnackBar(
                           content: Text('صلاحية تسجيل المصاريف غير مفعلة لك')),
                     )
-                : (_isRecording ? _stopRecording : _startRecording),
+                : (_isRecording
+                    ? () => unawaited(_finishVoiceRecordingAndConfirm())
+                    : _startRecording),
             onMicDown: user?.canAddExpenses == false
                 ? null
                 : () => unawaited(_startRecording()),

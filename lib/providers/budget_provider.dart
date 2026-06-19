@@ -103,4 +103,18 @@ class BudgetProvider extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  Future<void> removeExpenseCategory(String groupId, String category) async {
+    _loading = true;
+    notifyListeners();
+    try {
+      await _db.removeExpenseCategory(groupId, category);
+      _transactions = await _db.getTransactionsSync(groupId);
+      _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
+      _budgets = await _db.getBudgetsSync(groupId);
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
 }

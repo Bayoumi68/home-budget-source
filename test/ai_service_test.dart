@@ -98,6 +98,19 @@ void main() {
         AIService.parseExpenseMessages('دفعت 100 درس هنا').single['category'],
         'تعليم',
       );
+      expect(
+        AIService.parseExpenseMessages('دفعت 60 توك توك').single['category'],
+        'مواصلات',
+      );
+      expect(
+        AIService.parseExpenseMessages('دفعت 400 روشتة وتحاليل')
+            .single['category'],
+        'صحة',
+      );
+      expect(
+        AIService.parseExpenseMessages('دفعت 250 حضانة').single['category'],
+        'تعليم',
+      );
     });
   });
 }

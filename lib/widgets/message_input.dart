@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 
@@ -47,12 +48,14 @@ class MessageInput extends StatelessWidget {
         child: Row(
           children: [
             GestureDetector(
-              onTapDown:
-                  enabled && !isSending ? (_) => (onMicDown ?? onMic)() : null,
-              onTapUp: enabled && !isSending
+              onTap: enabled && !isSending && kIsWeb ? onMic : null,
+              onTapDown: enabled && !isSending && !kIsWeb
+                  ? (_) => (onMicDown ?? onMic)()
+                  : null,
+              onTapUp: enabled && !isSending && !kIsWeb
                   ? (_) => (onMicUp ?? onMic)()
                   : null,
-              onTapCancel: enabled && !isSending
+              onTapCancel: enabled && !isSending && !kIsWeb
                   ? () => (onMicCancel ?? onMicUp ?? onMic)()
                   : null,
               child: Container(
@@ -60,8 +63,7 @@ class MessageInput extends StatelessWidget {
                 height: 44,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color:
-                      isRecording ? AppTheme.expenseRed : Colors.transparent,
+                  color: isRecording ? AppTheme.expenseRed : Colors.transparent,
                 ),
                 child: Icon(
                   isRecording ? Icons.stop_rounded : Icons.mic_rounded,
@@ -101,7 +103,8 @@ class MessageInput extends StatelessWidget {
                             : 'صلاحية تسجيل المصاريف غير مفعلة لك',
                     hintTextDirection: ui.TextDirection.rtl,
                     border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
                   ),
                 ),
               ),
@@ -112,7 +115,8 @@ class MessageInput extends StatelessWidget {
               height: 44,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: enabled && !isSending ? AppTheme.accentTeal : Colors.grey,
+                color:
+                    enabled && !isSending ? AppTheme.accentTeal : Colors.grey,
               ),
               child: IconButton(
                 icon: isSending
