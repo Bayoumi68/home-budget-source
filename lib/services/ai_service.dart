@@ -18,7 +18,11 @@ class AIService {
     final isIncome = _looksLikeIncome(normalized);
     final detected = _detectCategory(normalized, isIncome: isIncome);
     final explicitLabel = isIncome ? null : _explicitExpenseLabel(normalized);
-    final category = explicitLabel ?? detected;
+    final category = _chooseExpenseCategory(
+      detected: detected,
+      explicitLabel: explicitLabel,
+      isIncome: isIncome,
+    );
 
     return {
       'amount': amount,
@@ -91,8 +95,7 @@ class AIService {
       boundaries.add((start: match.start, end: match.end));
     }
 
-    final connectors =
-        RegExp(r'(^|[\s،,])(و)(?=[\d\u0600-\u06FF])');
+    final connectors = RegExp(r'(^|[\s،,])(و)(?=[\d\u0600-\u06FF])');
     for (final match in connectors.allMatches(text)) {
       final prefixLength = match.group(1)!.length;
       final connectorStart = match.start + prefixLength;
@@ -118,14 +121,32 @@ class AIService {
     final isIncome = _looksLikeIncome(normalized);
     final detected = _detectCategory(normalized, isIncome: isIncome);
     final explicitLabel = isIncome ? null : _explicitExpenseLabel(normalized);
+    final category = _chooseExpenseCategory(
+      detected: detected,
+      explicitLabel: explicitLabel,
+      isIncome: isIncome,
+    );
 
     return {
       'amount': amount,
-      'category': explicitLabel ?? detected,
+      'category': category,
       'isExpense': !isIncome,
       'note': segment,
-      'confidence': _confidence(normalized, explicitLabel ?? detected),
+      'confidence': _confidence(normalized, category),
     };
+  }
+
+  static String _chooseExpenseCategory({
+    required String detected,
+    required String? explicitLabel,
+    required bool isIncome,
+  }) {
+    if (isIncome) return detected;
+    if (detected != 'أخرى' &&
+        _preferDetectedExpenseCategories.contains(detected)) {
+      return detected;
+    }
+    return explicitLabel ?? detected;
   }
 
   static String _normalize(String input) {
@@ -202,6 +223,9 @@ class AIService {
       'ب',
       'ل',
       'عن',
+      'جبت',
+      'اخدت',
+      'خدت',
     };
     final label = normalized
         .replaceAll(RegExp(r'\d+(?:\.\d+)?'), ' ')
@@ -389,6 +413,9 @@ class AIService {
     'دفعت',
     'صرفت',
     'اشتريت',
+    'جبت',
+    'اخدت',
+    'خدت',
     'اديت',
     'اعطيت',
     'سجل',
@@ -417,10 +444,24 @@ class AIService {
     'دفعت',
     'صرفت',
     'اشتريت',
+    'جبت',
+    'اخدت',
+    'خدت',
     'اديت',
     'اعطيت',
     'خصم',
   ];
+
+  static const _preferDetectedExpenseCategories = {
+    'مواصلات',
+    'تعليم',
+    'صحة',
+    'اتصالات',
+    'إنترنت',
+    'ملابس',
+    'ترفيه',
+    'هدايا',
+  };
 
   static const List<Map<String, Object>> _expenseCategories = [
     {
@@ -453,7 +494,12 @@ class AIService {
         'ميكروباص',
         'تاكسي',
         'اوبر',
+        'أوبر',
+        'uber',
         'كريم',
+        'ديدي',
+        'اندرايف',
+        'inDrive',
         'مترو',
         'جراج',
       ],
@@ -487,16 +533,42 @@ class AIService {
         'فودافون',
         'اتصالات',
         'اورنج',
-        'وي',
+        'شركة وي',
+        'we',
       ],
     },
     {
       'category': 'تعليم',
-      'keywords': ['مدرسه', 'مدرسة', 'جامعه', 'جامعة', 'دروس', 'كتب'],
+      'keywords': [
+        'مدرسه',
+        'مدرسة',
+        'جامعه',
+        'جامعة',
+        'دروس',
+        'درس',
+        'مدرس',
+        'مدرسين',
+        'سنتر',
+        'كورس',
+        'كتب'
+      ],
     },
     {
       'category': 'صحة',
-      'keywords': ['دكتور', 'مستشفى', 'مستشفي', 'علاج', 'دواء', 'صيدليه', 'صيدلية', 'كشف'],
+      'keywords': [
+        'دكتور',
+        'مستشفى',
+        'مستشفي',
+        'علاج',
+        'دواء',
+        'دوا',
+        'ادويه',
+        'أدوية',
+        'صيدليه',
+        'صيدلية',
+        'صيدلي',
+        'كشف'
+      ],
     },
     {
       'category': 'ملابس',

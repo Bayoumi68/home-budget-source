@@ -82,5 +82,22 @@ void main() {
 
       expect(AIService.formatExpenseText(item), 'مصروف 200 ج - كهرباء');
     });
+
+    test('classifies Egyptian service words into built-in categories', () {
+      expect(
+        AIService.parseExpenseMessages('انا دفعت 100 اوبر').single['category'],
+        'مواصلات',
+      );
+      expect(
+        AIService.parseExpenseMessages(
+                'انا دفعت 100 جنيه جبت ادويه من الصيدليه')
+            .single['category'],
+        'صحة',
+      );
+      expect(
+        AIService.parseExpenseMessages('دفعت 100 درس هنا').single['category'],
+        'تعليم',
+      );
+    });
   });
 }
