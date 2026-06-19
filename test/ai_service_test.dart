@@ -76,5 +76,11 @@ void main() {
       expect(items[1]['amount'], 200);
       expect(items[1]['category'], 'كهرباء');
     });
+
+    test('formats expense text in readable Arabic', () {
+      final item = AIService.parseExpenseMessages('صرفت 200 كهرباء').single;
+
+      expect(AIService.formatExpenseText(item), 'مصروف 200 ج - كهرباء');
+    });
   });
 }
