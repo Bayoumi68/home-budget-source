@@ -2,11 +2,11 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <title>تثبيت Budget Home</title>
+  <title>فتح Budget Home</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="ثبّت تطبيق Budget Home APK وافتح دعوة العائلة مباشرة داخل التطبيق.">
-  <meta property="og:title" content="تثبيت Budget Home">
-  <meta property="og:description" content="تحميل APK ثم فتح دعوة العائلة داخل التطبيق.">
+  <meta name="description" content="افتح Budget Home على الويب فورًا، أو حمّل APK اختياريًا على أندرويد.">
+  <meta property="og:title" content="فتح Budget Home">
+  <meta property="og:description" content="الويب يعمل على أندرويد وآيفون بدون تثبيت، وAPK اختياري لأندرويد.">
   <meta property="og:type" content="website">
   <style>
     body{font-family:Arial,Tahoma,sans-serif;background:#f6f2ea;color:#053f38;margin:0;padding:22px}
@@ -17,11 +17,11 @@
 </head>
 <body>
   <div class="card">
-    <h1 id="title">Budget Home — تثبيت التطبيق</h1>
-    <p class="note" id="desc">ثبّت التطبيق أولًا، وبعد التثبيت ارجع لهذه الصفحة واضغط فتح الدعوة في التطبيق.</p>
-    <a id="androidBtn" class="btn download" href="/download.html" target="_blank" rel="noopener">تحميل وتثبيت Android APK</a>
-    <button id="openBtn" class="btn open" onclick="openInvite()">فتح الدعوة في تطبيق أندرويد</button>
-    <a id="webBtn" class="btn web" href="/">فتح نسخة الويب للآيفون أو بدون تثبيت</a>
+    <h1 id="title">Budget Home — فتح التطبيق</h1>
+    <p class="note" id="desc">افتح نسخة الويب فورًا على أي موبايل. تحميل APK على أندرويد اختياري.</p>
+    <a id="webBtn" class="btn web" href="/">فتح نسخة الويب الآن</a>
+    <a id="androidBtn" class="btn download" href="/download.html" target="_blank" rel="noopener">اختياري: تحميل Android APK</a>
+    <button id="openBtn" class="btn open" onclick="openInvite()">اختياري: فتح الدعوة في تطبيق أندرويد المثبت</button>
     <p id="platformNote" class="note warn"></p>
     <p class="note">لو زر الفتح لم يعمل، افتح التطبيق يدويًا واكتب كود الدعوة التالي:</p>
     <code id="codeBox"></code>
@@ -40,17 +40,17 @@
     ? 'Budget Home — دعوة عائلية'
     : newFamilyMode
       ? 'Budget Home — تجربة وإنشاء عائلة جديدة'
-      : 'Budget Home — تثبيت التطبيق';
+      : 'Budget Home — فتح التطبيق';
   document.getElementById('desc').textContent = hasInvite
-    ? 'أندرويد يمكنه تثبيت التطبيق. آيفون لا يثبت APK، استخدم نسخة الويب من الزر المخصص.'
+    ? 'افتح نسخة الويب فورًا للانضمام. على أندرويد يمكنك تحميل APK اختياريًا لو تريد تجربة تطبيق مثبت.'
     : newFamilyMode
-      ? 'هذا الرابط للتجربة فقط. بعد الفتح اكتب اسمك ورقمك واختر إنشاء عائلة جديدة.'
-    : 'على أندرويد ثبّت التطبيق. على آيفون افتح نسخة الويب بدون تثبيت.';
+      ? 'هذا الرابط للتجربة فقط. افتح الويب واكتب اسمك ورقمك واختر إنشاء عائلة جديدة.'
+    : 'نسخة الويب تعمل على أندرويد وآيفون بدون تثبيت. APK اختياري لأندرويد فقط.';
   document.getElementById('platformNote').textContent = isiOS
-    ? 'تم اكتشاف iPhone: لا يمكن تثبيت APK على آيفون. افتح نسخة الويب وستدخل بنفس دعوة العائلة.'
+    ? 'تم اكتشاف iPhone: استخدم نسخة الويب. ملاحظة: التسجيل الصوتي على iPhone Web قد لا يعمل بسبب قيود Safari؛ استخدم الكتابة أو ميكروفون الكيبورد.'
     : isAndroid
-      ? 'تم اكتشاف Android: التحميل الآن ملف APK مباشر. إذا منع الهاتف التثبيت، فعّل السماح بالتثبيت من المتصفح لهذا الملف.'
-      : 'لو جهازك iPhone استخدم نسخة الويب. لو Android استخدم زر تحميل APK.';
+      ? 'تم اكتشاف Android: يمكنك استخدام الويب الآن بدون تحميل. لو الصوت من المتصفح لم يعمل، استخدم ميكروفون الكيبورد أو حمّل APK الاختياري.'
+      : 'استخدم نسخة الويب بدون تثبيت. APK متاح فقط لأندرويد كاختيار إضافي.';
   if (isiOS) {
     document.getElementById('androidBtn').style.display = 'none';
     document.getElementById('openBtn').style.display = 'none';

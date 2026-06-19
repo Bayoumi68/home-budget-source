@@ -217,9 +217,10 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
     final message = 'دعوة فرد للانضمام إلى عائلتنا على Budget Home\n\n'
         'افتح الرابط التالي:\n$inviteLanding\n\n'
-        'أندرويد: من الصفحة اضغط تحميل وتثبيت APK، وبعد التثبيت ارجع واضغط فتح الدعوة في التطبيق.\n'
-        'آيفون: لا يثبت APK، اضغط فتح نسخة الويب من نفس الصفحة.\n\n'
-        'رابط أندرويد للتثبيت:\n${AppConstants.androidDownloadLink}\n\n'
+        'افتح نسخة الويب من الصفحة مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
+        'أندرويد: APK اختياري لو تريد تجربة تطبيق مثبت أو لو الصوت من المتصفح لم يعمل.\n'
+        'آيفون: استخدم الويب، والتسجيل الصوتي قد لا يعمل بسبب قيود Safari.\n\n'
+        'رابط APK الاختياري لأندرويد:\n${AppConstants.androidDownloadLink}\n\n'
         'كود الدعوة: $code';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =
@@ -262,8 +263,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         '${AppConstants.appWebLink}/install.html?mode=newFamily&reset=1&v=${Uri.encodeComponent(AppConstants.appVersion)}';
     final message = 'جرّب Budget Home وأنشئ عائلتك أنت\n\n'
         'افتح الرابط التالي:\n$trialUrl\n\n'
-        'أندرويد: حمّل وثبّت APK من الصفحة.\n'
-        'آيفون: افتح نسخة الويب من نفس الصفحة بدون تثبيت.\n\n'
+        'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
+        'APK اختياري لأندرويد فقط لو تريد تطبيق مثبت أو صوت أفضل.\n\n'
         'هذا الرابط للتجربة وإنشاء عائلة جديدة، وليس للانضمام لعائلتنا.';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =
@@ -365,7 +366,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                       color: AppTheme.incomeGreen),
                   title: const Text('دعوة فرد للعائلة'),
                   subtitle: const Text(
-                      'يرسل صفحة تثبيت APK ثم فتح الدعوة داخل التطبيق.'),
+                      'يرسل صفحة ويب للانضمام، مع APK اختياري لأندرويد.'),
                   trailing: const Icon(Icons.send_rounded),
                   onTap: _shareInviteOnWhatsApp,
                 ),
