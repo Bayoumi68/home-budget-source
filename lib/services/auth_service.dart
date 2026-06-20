@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
 
 class AuthService {
@@ -6,7 +7,34 @@ class AuthService {
   final _random = Random.secure();
   static const defaultCountryCode = '+20';
 
-  // Simulated user creation — no Firebase needed yet.
+  FirebaseAuth get _firebaseAuth => FirebaseAuth.instance;
+
+  String? get currentAuthUid {
+    try {
+      return _firebaseAuth.currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> ensureFirebaseIdentity() async {
+    try {
+      final current = _firebaseAuth.currentUser;
+      if (current != null) return current.uid;
+      final credential = await _firebaseAuth.signInAnonymously();
+      return credential.user?.uid;
+    } on FirebaseAuthException {
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> signOutFirebase() async {
+    await _firebaseAuth.signOut();
+  }
+
+  // Local fallback ID remains available if Firebase Auth is not enabled yet.
   String createUserId() => _uuid.v4();
 
   String normalizePhone(String input) {
@@ -29,6 +57,5 @@ class AuthService {
     return List.generate(6, (_) => _random.nextInt(10)).join();
   }
 
-  // In local mode, we don't need actual auth.
-  bool isLoggedIn() => true;
+  bool isLoggedIn() => currentAuthUid != null;
 }

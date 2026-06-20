@@ -16,10 +16,15 @@ class AuthProvider extends ChangeNotifier {
   GroupModel? get group => _group;
   bool get loading => _loading;
   bool get isLoggedIn => _user != null && _group != null;
+  String? get authUid => _authService.currentAuthUid;
+
+  Future<String?> ensureFirebaseIdentity() =>
+      _authService.ensureFirebaseIdentity();
 
   Future<void> restoreSession() async {
     _loading = true;
     notifyListeners();
+    final uid = await ensureFirebaseIdentity();
     await _db.writeDiagnostic('app_open');
 
     // In the web test phase, clear any local session from older builds.
@@ -44,7 +49,12 @@ class AuthProvider extends ChangeNotifier {
       } else {
         _group = freshGroup;
         final freshMember = await _db.getMember(_group!.id, _user!.id);
-        if (freshMember != null) _user = freshMember;
+        if (freshMember != null) {
+          _user = freshMember;
+          if (uid != null && freshMember.authUid != uid) {
+            _user = await _db.bindMemberAuthUid(_group!.id, freshMember, uid);
+          }
+        }
       }
     }
     _loading = false;
@@ -54,9 +64,12 @@ class AuthProvider extends ChangeNotifier {
   UserModel createUser(String name, {String? phone, bool isAdmin = false}) {
     final normalizedPhone = _authService.normalizePhone(phone ?? '');
     _user = UserModel(
-      id: normalizedPhone.isNotEmpty ? 'phone_$normalizedPhone' : _authService.createUserId(),
+      id: normalizedPhone.isNotEmpty
+          ? 'phone_$normalizedPhone'
+          : _authService.createUserId(),
       name: name,
       phone: normalizedPhone.isEmpty ? null : normalizedPhone,
+      authUid: _authService.currentAuthUid,
       isAdmin: isAdmin,
       canAddExpenses: true,
       canViewReports: true,

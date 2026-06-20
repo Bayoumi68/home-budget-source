@@ -2,6 +2,7 @@ class UserModel {
   final String id;
   final String name;
   final String? phone;
+  final String? authUid;
   final String? photoUrl;
   final bool isAdmin;
   final double monthlyLimit;
@@ -16,6 +17,7 @@ class UserModel {
     required this.id,
     required this.name,
     this.phone,
+    this.authUid,
     this.photoUrl,
     this.isAdmin = false,
     this.monthlyLimit = 0,
@@ -33,13 +35,17 @@ class UserModel {
 
   String get roleName => isAdmin ? 'قائد العائلة' : 'عضو';
   bool get hasSpendingLimit => monthlyLimit > 0;
-  double get remainingLimit => hasSpendingLimit ? monthlyLimit - currentSpending : double.infinity;
-  double get spendingPercentage => monthlyLimit > 0 ? (currentSpending / monthlyLimit).clamp(0.0, 1.0).toDouble() : 0;
+  double get remainingLimit =>
+      hasSpendingLimit ? monthlyLimit - currentSpending : double.infinity;
+  double get spendingPercentage => monthlyLimit > 0
+      ? (currentSpending / monthlyLimit).clamp(0.0, 1.0).toDouble()
+      : 0;
 
   Map<String, dynamic> toMap() => {
         'id': id,
         'name': name,
         'phone': phone,
+        'authUid': authUid,
         'photoUrl': photoUrl,
         'isAdmin': isAdmin,
         'monthlyLimit': monthlyLimit,
@@ -57,6 +63,7 @@ class UserModel {
       id: map['id'] ?? '',
       name: map['name'] ?? '',
       phone: map['phone'],
+      authUid: map['authUid'],
       photoUrl: map['photoUrl'],
       isAdmin: isAdmin,
       monthlyLimit: (map['monthlyLimit'] as num?)?.toDouble() ?? 0,
@@ -73,6 +80,7 @@ class UserModel {
     String? id,
     String? name,
     String? phone,
+    String? authUid,
     String? photoUrl,
     bool? isAdmin,
     double? monthlyLimit,
@@ -87,6 +95,7 @@ class UserModel {
         id: id ?? this.id,
         name: name ?? this.name,
         phone: phone ?? this.phone,
+        authUid: authUid ?? this.authUid,
         photoUrl: photoUrl ?? this.photoUrl,
         isAdmin: isAdmin ?? this.isAdmin,
         monthlyLimit: monthlyLimit ?? this.monthlyLimit,

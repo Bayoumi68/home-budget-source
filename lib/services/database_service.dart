@@ -209,13 +209,28 @@ class DatabaseService {
         : prepared.copyWith(
             id: userToMerge.id,
             name: userToMerge.name.isEmpty ? prepared.name : userToMerge.name,
-            phone: userToMerge.phone ?? prepared.phone);
+            phone: userToMerge.phone ?? prepared.phone,
+            authUid: userToMerge.authUid ?? prepared.authUid);
     await _members(groupId)
         .doc(toSave.id)
         .set(toSave.toMap(), SetOptions(merge: true));
     if (prepared != null && prepared.id != toSave.id) {
       await _members(groupId).doc(prepared.id).delete();
     }
+  }
+
+  Future<UserModel> bindMemberAuthUid(
+      String groupId, UserModel member, String authUid) async {
+    final updated = member.copyWith(authUid: authUid);
+    await _members(groupId)
+        .doc(member.id)
+        .set(updated.toMap(), SetOptions(merge: true));
+    final active = await getActiveUser();
+    if (active?.id == member.id) {
+      final group = await getGroupById(groupId) ?? await getActiveGroup();
+      if (group != null) await saveActiveSession(updated, group);
+    }
+    return updated;
   }
 
   // ─── Members ───

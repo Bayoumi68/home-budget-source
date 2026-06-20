@@ -168,6 +168,7 @@ class _AuthScreenState extends State<AuthScreen> {
       final verified = await _verifyPhoneWithDemoWhatsApp(phone);
       if (!verified) return;
       final auth = context.read<AuthProvider>();
+      await auth.ensureFirebaseIdentity();
       final user = auth.createUser(name, phone: phone, isAdmin: true);
       final group =
           await _db.createGroup(groupName, user.id, name, adminPhone: phone);
@@ -195,6 +196,7 @@ class _AuthScreenState extends State<AuthScreen> {
       final verified = await _verifyPhoneWithDemoWhatsApp(phone);
       if (!verified) return;
       final auth = context.read<AuthProvider>();
+      await auth.ensureFirebaseIdentity();
       final user = auth.createUser(name, phone: phone);
 
       var group =
@@ -254,7 +256,12 @@ class _AuthScreenState extends State<AuthScreen> {
         _snack('رقمك غير موجود في هذه العائلة. راجع قائد العائلة.');
         return;
       }
-      await context.read<AuthProvider>().setSession(member, group);
+      final auth = context.read<AuthProvider>();
+      final uid = await auth.ensureFirebaseIdentity();
+      final linkedMember = uid == null
+          ? member
+          : await _db.bindMemberAuthUid(group.id, member, uid);
+      await auth.setSession(linkedMember, group);
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/chat', arguments: {
           'groupId': group.id,

@@ -10,6 +10,24 @@ service cloud.firestore {
       return request.resource.data.groupId == groupId;
     }
 
+    function hasAuthUidField() {
+      return request.resource.data.keys().hasAny(['authUid'])
+        && request.resource.data.authUid != null
+        && request.resource.data.authUid != '';
+    }
+
+    function authUidMatchesSignedInUser() {
+      return !hasAuthUidField()
+        || (request.auth != null && request.resource.data.authUid == request.auth.uid);
+    }
+
+    function authUidIsPreserved() {
+      return !hasAuthUidField()
+        || (resource.data.keys().hasAny(['authUid'])
+          && resource.data.authUid == request.resource.data.authUid)
+        || (request.auth != null && request.resource.data.authUid == request.auth.uid);
+    }
+
     // Beta-safe diagnostics: clients can write small events, but nobody can read
     // all diagnostic data from the client.
     match /diagnostics/{docId} {
@@ -42,8 +60,12 @@ service cloud.firestore {
 
       match /members/{memberId} {
         allow read: if validGroupId(groupId);
-        allow create, update: if validGroupId(groupId)
-          && request.resource.data.id == memberId;
+        allow create: if validGroupId(groupId)
+          && request.resource.data.id == memberId
+          && authUidMatchesSignedInUser();
+        allow update: if validGroupId(groupId)
+          && request.resource.data.id == memberId
+          && authUidIsPreserved();
         allow delete: if validGroupId(groupId);
       }
 

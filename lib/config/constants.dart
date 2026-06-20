@@ -3,7 +3,7 @@ class AppConstants {
   static const String appWebLink = 'https://budget-home-family-test.web.app';
   static const String androidDownloadLink =
       'https://budget-home-family-test.web.app/download.html';
-  static const String appVersion = '0.5.15-entry-flow';
+  static const String appVersion = '0.5.16-auth-bridge';
   static const String defaultCurrency = 'EGP';
   static const String aiAssistantName = 'مساعد العائلة';
   static const int maxFamilyMembers = 10;
