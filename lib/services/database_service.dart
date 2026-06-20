@@ -8,6 +8,7 @@ import '../models/transaction_model.dart';
 import '../models/budget_model.dart';
 import '../models/group_model.dart';
 import '../models/family_notification_model.dart';
+import '../models/wallet_model.dart';
 import '../config/constants.dart';
 import '../services/auth_service.dart';
 import '../utils/category_utils.dart';
@@ -22,6 +23,7 @@ import '../utils/category_utils.dart';
 /// families/{groupId}/budgets
 /// families/{groupId}/categories
 /// families/{groupId}/notifications
+/// families/{groupId}/wallets
 class DatabaseService {
   static const _activeUserKey = 'active_user';
   static const _activeGroupKey = 'active_group';
@@ -49,6 +51,8 @@ class DatabaseService {
       _families.doc(groupId).collection('categories');
   CollectionReference<Map<String, dynamic>> _notifications(String groupId) =>
       _families.doc(groupId).collection('notifications');
+  CollectionReference<Map<String, dynamic>> _wallets(String groupId) =>
+      _families.doc(groupId).collection('wallets');
 
   String _newInviteCode() {
     return List.generate(
@@ -405,6 +409,61 @@ class DatabaseService {
       await recalculateBudgetsForCurrentMonth(groupId);
     }
     return deleted;
+  }
+
+  // ─── Wallets ───
+  Future<List<WalletModel>> getWalletsSync(String groupId) async {
+    final q = await _wallets(groupId).orderBy('createdAt').get();
+    if (q.docs.isEmpty) {
+      final wallet = WalletModel(
+        id: 'default',
+        name: 'المحفظة الأساسية',
+        balance: 0,
+        isDefault: true,
+      );
+      await _wallets(groupId).doc(wallet.id).set({
+        ...wallet.toMap(),
+        'createdAt': DateTime.now().toIso8601String(),
+      }, SetOptions(merge: true));
+      return [wallet];
+    }
+    final wallets = q.docs.map((d) => WalletModel.fromMap(d.data())).toList();
+    wallets.sort((a, b) {
+      if (a.isDefault && !b.isDefault) return -1;
+      if (!a.isDefault && b.isDefault) return 1;
+      return a.name.compareTo(b.name);
+    });
+    return wallets;
+  }
+
+  Future<void> addWallet(String groupId, String name, double balance) async {
+    final clean = name.trim().isEmpty ? 'محفظة جديدة' : name.trim();
+    final id = _docSafeId(clean);
+    await _wallets(groupId).doc(id).set({
+      'id': id,
+      'name': clean,
+      'balance': balance,
+      'isDefault': false,
+      'createdAt': DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> updateWalletBalance(
+      String groupId, String walletId, double balance) async {
+    await _wallets(groupId).doc(walletId).set({
+      'balance': balance,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> applyWalletDelta(
+      String groupId, String walletId, double delta) async {
+    if (walletId.trim().isEmpty) return;
+    await _wallets(groupId).doc(walletId).set({
+      'balance': FieldValue.increment(delta),
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
   }
 
   // ─── Expense Categories + Budgets ───

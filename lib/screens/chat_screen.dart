@@ -15,6 +15,7 @@ import '../providers/chat_provider.dart';
 import '../providers/budget_provider.dart';
 import '../providers/notification_provider.dart';
 import '../models/chat_message_model.dart';
+import '../models/wallet_model.dart';
 import '../services/voice_service.dart';
 import '../services/ai_service.dart';
 import '../services/local_notice_service.dart';
@@ -219,6 +220,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final multiExpenses = AIService.parseExpenseMessages(text);
+    final totalExpense = multiExpenses
+        .where((item) => item['isExpense'] == true)
+        .fold<double>(0, (sum, item) => sum + (item['amount'] as double));
     if (!skipMultiConfirm && multiExpenses.length > 1) {
       final ok = await _confirmMultipleExpenses(multiExpenses);
       if (ok != true) {
@@ -228,6 +232,15 @@ class _ChatScreenState extends State<ChatScreen> {
         if (mounted) setState(() => _isSending = false);
         return;
       }
+    }
+    final selectedWallet =
+        totalExpense > 0 ? await _pickWalletForExpense(totalExpense) : null;
+    if (totalExpense > 0 && selectedWallet == _walletSelectionCancelled) {
+      _putTextInInput(text);
+      _lastSubmittedText = null;
+      _lastSubmittedAt = null;
+      if (mounted) setState(() => _isSending = false);
+      return;
     }
 
     final auth = context.read<AuthProvider>();
@@ -243,8 +256,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final chat = context.read<ChatProvider>();
-      final warning =
-          await chat.sendTextMessage(widget.groupId, auth.user!, text);
+      final warning = await chat.sendTextMessage(
+        widget.groupId,
+        auth.user!,
+        text,
+        wallet: selectedWallet,
+      );
       await chat.refreshMessages(widget.groupId);
       await context.read<BudgetProvider>().refreshData(widget.groupId);
       await context.read<NotificationProvider>().load(widget.groupId);
@@ -266,6 +283,55 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.selection =
         TextSelection.fromPosition(TextPosition(offset: text.length));
     _updateParsedPreview(text);
+  }
+
+  static final WalletModel _walletSelectionCancelled = WalletModel(
+    id: '__cancelled__',
+    name: '__cancelled__',
+    balance: 0,
+  );
+
+  Future<WalletModel?> _pickWalletForExpense(double amount) async {
+    final budget = context.read<BudgetProvider>();
+    var wallets = budget.wallets.where((w) => w.balance > 0).toList();
+    if (wallets.isEmpty) return null;
+    if (wallets.length == 1) return wallets.first;
+    wallets = wallets
+      ..sort((a, b) {
+        if (a.isDefault && !b.isDefault) return -1;
+        if (!a.isDefault && b.isDefault) return 1;
+        return b.balance.compareTo(a.balance);
+      });
+    final selected = await showDialog<WalletModel>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تخصم من أي محفظة؟'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('قيمة المصروف: ${amount.toStringAsFixed(0)} ج'),
+            const SizedBox(height: 8),
+            ...wallets.map(
+              (wallet) => RadioListTile<WalletModel>(
+                value: wallet,
+                groupValue: null,
+                onChanged: (value) => Navigator.pop(ctx, value),
+                title: Text(wallet.name),
+                subtitle:
+                    Text('الرصيد: ${wallet.balance.toStringAsFixed(0)} ج'),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, _walletSelectionCancelled),
+            child: const Text('إلغاء'),
+          ),
+        ],
+      ),
+    );
+    return selected ?? _walletSelectionCancelled;
   }
 
   Future<void> _clearChat() async {
@@ -715,7 +781,7 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               Text(widget.groupName, style: const TextStyle(fontSize: 18)),
               Text(
-                'الميزانية: ${NumberFormat('#,###').format(budget.balance)} ج',
+                'رصيد المحافظ: ${NumberFormat('#,###').format(budget.balance)} ج',
                 style: const TextStyle(fontSize: 13, color: Colors.white70),
               ),
               const Text(
@@ -814,11 +880,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     amount: budget.totalExpenses,
                     color: AppTheme.expenseRed),
                 _SummaryItem(
-                    label: 'الدخل',
-                    amount: budget.totalIncome,
+                    label: 'المحافظ',
+                    amount: budget.balance,
                     color: AppTheme.incomeGreen),
                 _SummaryItem(
-                    label: 'المتبقي',
+                    label: 'المتاح',
                     amount: budget.balance,
                     color: AppTheme.gold),
               ],

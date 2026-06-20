@@ -9,6 +9,8 @@ class TransactionModel {
   final String? note;
   final DateTime date;
   final String? receiptUrl;
+  final String? walletId;
+  final String? walletName;
 
   TransactionModel({
     required this.id,
@@ -21,31 +23,38 @@ class TransactionModel {
     this.note,
     DateTime? date,
     this.receiptUrl,
+    this.walletId,
+    this.walletName,
   }) : date = date ?? DateTime.now();
 
   Map<String, dynamic> toMap() => {
-    'id': id,
-    'groupId': groupId,
-    'userId': userId,
-    'userName': userName,
-    'amount': amount,
-    'category': category,
-    'isExpense': isExpense,
-    'note': note,
-    'date': date.toIso8601String(),
-    'receiptUrl': receiptUrl,
-  };
+        'id': id,
+        'groupId': groupId,
+        'userId': userId,
+        'userName': userName,
+        'amount': amount,
+        'category': category,
+        'isExpense': isExpense,
+        'note': note,
+        'date': date.toIso8601String(),
+        'receiptUrl': receiptUrl,
+        'walletId': walletId,
+        'walletName': walletName,
+      };
 
-  factory TransactionModel.fromMap(Map<String, dynamic> map) => TransactionModel(
-    id: map['id'] ?? '',
-    groupId: map['groupId'] ?? '',
-    userId: map['userId'] ?? '',
-    userName: map['userName'] ?? '',
-    amount: (map['amount'] as num?)?.toDouble() ?? 0,
-    category: map['category'] ?? '',
-    isExpense: map['isExpense'] ?? true,
-    note: map['note'],
-    date: DateTime.tryParse(map['date'] ?? '') ?? DateTime.now(),
-    receiptUrl: map['receiptUrl'],
-  );
+  factory TransactionModel.fromMap(Map<String, dynamic> map) =>
+      TransactionModel(
+        id: map['id'] ?? '',
+        groupId: map['groupId'] ?? '',
+        userId: map['userId'] ?? '',
+        userName: map['userName'] ?? '',
+        amount: (map['amount'] as num?)?.toDouble() ?? 0,
+        category: map['category'] ?? '',
+        isExpense: map['isExpense'] ?? true,
+        note: map['note'],
+        date: DateTime.tryParse(map['date'] ?? '') ?? DateTime.now(),
+        receiptUrl: map['receiptUrl'],
+        walletId: map['walletId'],
+        walletName: map['walletName'],
+      );
 }

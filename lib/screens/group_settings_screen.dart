@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:uuid/uuid.dart';
 import '../config/theme.dart';
 import '../config/constants.dart';
-import '../models/transaction_model.dart';
+import '../models/wallet_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/budget_provider.dart';
@@ -23,7 +22,6 @@ class GroupSettingsScreen extends StatefulWidget {
 
 class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   final _db = DatabaseService();
-  final _uuid = const Uuid();
 
   @override
   void initState() {
@@ -82,26 +80,95 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     }
   }
 
-  Future<void> _showSetMonthlyIncomeDialog() async {
-    final controller = TextEditingController();
-    final amount = await showDialog<double>(
+  Future<void> _showAddWalletDialog() async {
+    final nameController = TextEditingController();
+    final balanceController = TextEditingController();
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('تسجيل الدخل الشهري'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          textDirection: ui.TextDirection.ltr,
-          decoration: const InputDecoration(
-            hintText: 'المبلغ بالجنيه',
-            prefixIcon: Icon(Icons.payments_rounded),
-          ),
+        title: const Text('إضافة محفظة'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              textDirection: ui.TextDirection.rtl,
+              decoration: const InputDecoration(
+                labelText: 'اسم المحفظة',
+                hintText: 'مثال: كاش، بنك، فودافون كاش',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: balanceController,
+              keyboardType: TextInputType.number,
+              textDirection: ui.TextDirection.ltr,
+              decoration: const InputDecoration(
+                labelText: 'الرصيد الحالي',
+                hintText: 'المبلغ بالجنيه',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('إلغاء'),
           ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              ctx,
+              {
+                'name': nameController.text.trim(),
+                'balance': double.tryParse(
+                      balanceController.text.trim().replaceAll(',', '.'),
+                    ) ??
+                    0,
+              },
+            ),
+            child: const Text('إضافة'),
+          ),
+        ],
+      ),
+    );
+    nameController.dispose();
+    balanceController.dispose();
+    if (result == null || !mounted) return;
+    final name = (result['name'] as String?)?.trim() ?? '';
+    if (name.isEmpty) return;
+    final balance = result['balance'] as double;
+    await context.read<BudgetProvider>().addWallet(
+          widget.groupId,
+          name,
+          balance,
+        );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تمت إضافة محفظة $name')),
+    );
+  }
+
+  Future<void> _showEditWalletDialog(WalletModel wallet) async {
+    final controller =
+        TextEditingController(text: wallet.balance.toStringAsFixed(0));
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('رصيد ${wallet.name}'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          textDirection: ui.TextDirection.ltr,
+          decoration: const InputDecoration(
+            labelText: 'الرصيد الحالي',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
           FilledButton(
             onPressed: () => Navigator.pop(
               ctx,
@@ -113,32 +180,10 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
       ),
     );
     controller.dispose();
-    if (amount == null || amount <= 0 || !mounted) return;
-
-    final auth = context.read<AuthProvider>();
-    final user = auth.user;
-    if (user == null) return;
-
-    final budgetProvider = context.read<BudgetProvider>();
-    await _db.addTransaction(
-      TransactionModel(
-        id: _uuid.v4(),
-        groupId: widget.groupId,
-        userId: user.id,
-        userName: user.name,
-        amount: amount,
-        category: 'دخل شهري',
-        isExpense: false,
-        note: 'تم تسجيله من الإعدادات',
-      ),
-    );
-    await budgetProvider.refreshData(widget.groupId);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content:
-              Text('تم تسجيل دخل شهري بقيمة ${amount.toStringAsFixed(0)} ج')),
-    );
+    if (amount == null || amount < 0 || !mounted) return;
+    await context
+        .read<BudgetProvider>()
+        .updateWalletBalance(widget.groupId, wallet.id, amount);
   }
 
   Future<void> _showAddCategoryDialog() async {
@@ -411,13 +456,45 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           ),
           const SizedBox(height: 16),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.payments_rounded,
-                  color: AppTheme.incomeGreen),
-              title: const Text('الدخل الشهري'),
-              subtitle: const Text('سجل دخل الشهر من هنا بدل اقتراحات الشات.'),
-              trailing: const Icon(Icons.edit_rounded),
-              onTap: budget.loading ? null : _showSetMonthlyIncomeDialog,
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.account_balance_wallet_rounded,
+                      color: AppTheme.incomeGreen),
+                  title: const Text('المحافظ'),
+                  subtitle:
+                      const Text('أضف كاش أو بنك أو أي محفظة تريد الخصم منها.'),
+                  trailing: IconButton(
+                    tooltip: 'إضافة محفظة',
+                    onPressed: budget.loading ? null : _showAddWalletDialog,
+                    icon: const Icon(Icons.add_rounded),
+                  ),
+                ),
+                const Divider(height: 1),
+                if (budget.wallets.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Text('سيتم إنشاء محفظة أساسية تلقائيًا.'),
+                  )
+                else
+                  ...budget.wallets.map(
+                    (wallet) => ListTile(
+                      leading: Icon(
+                        wallet.isDefault
+                            ? Icons.account_balance_wallet_rounded
+                            : Icons.wallet_rounded,
+                        color: AppTheme.gold,
+                      ),
+                      title: Text(wallet.name),
+                      subtitle:
+                          Text('الرصيد ${wallet.balance.toStringAsFixed(0)} ج'),
+                      trailing: const Icon(Icons.edit_rounded),
+                      onTap: budget.loading
+                          ? null
+                          : () => _showEditWalletDialog(wallet),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 16),

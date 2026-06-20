@@ -5,6 +5,7 @@ import '../models/chat_message_model.dart';
 import '../models/transaction_model.dart';
 import '../models/user_model.dart';
 import '../models/family_notification_model.dart';
+import '../models/wallet_model.dart';
 import '../services/database_service.dart';
 import '../services/ai_service.dart';
 import '../utils/category_utils.dart';
@@ -71,7 +72,11 @@ class ChatProvider extends ChangeNotifier {
 
   /// Returns null on success, or an Arabic warning/error message for the UI.
   Future<String?> sendTextMessage(
-      String groupId, UserModel user, String text) async {
+    String groupId,
+    UserModel user,
+    String text, {
+    WalletModel? wallet,
+  }) async {
     if (AIService.isNextReportCommand(text)) {
       final sent = await sendNextReportPage(groupId);
       if (!sent) {
@@ -120,7 +125,13 @@ class ChatProvider extends ChangeNotifier {
 
     final aiResults = AIService.parseExpenseMessages(text);
     if (aiResults.length > 1) {
-      return _sendMultipleParsedEntries(groupId, user, text, aiResults);
+      return _sendMultipleParsedEntries(
+        groupId,
+        user,
+        text,
+        aiResults,
+        wallet: wallet,
+      );
     }
 
     final aiResult = aiResults.isEmpty ? null : aiResults.first;
@@ -180,20 +191,25 @@ class ChatProvider extends ChangeNotifier {
           (aiResult['targetUserId'] as String?) ?? user.id;
       final transactionUserName =
           (aiResult['targetUserName'] as String?) ?? user.name;
+      final isExpense = aiResult['isExpense'] as bool;
+      final amount = aiResult['amount'] as double;
       final transaction = TransactionModel(
         id: transactionId,
         groupId: groupId,
         userId: transactionUserId,
         userName: transactionUserName,
-        amount: aiResult['amount'] as double,
+        amount: amount,
         category: aiResult['category'] as String,
-        isExpense: aiResult['isExpense'] as bool,
+        isExpense: isExpense,
         note: aiResult['note'] as String?,
+        walletId: isExpense ? wallet?.id : null,
+        walletName: isExpense ? wallet?.name : null,
       );
       await _db.addTransaction(transaction);
+      if (isExpense && wallet != null) {
+        await _db.applyWalletDelta(groupId, wallet.id, -amount);
+      }
 
-      final isExpense = aiResult['isExpense'] as bool;
-      final amount = aiResult['amount'] as double;
       final category = aiResult['category'] as String;
       final title = isExpense ? 'مصروف جديد' : 'دخل جديد';
       final body =
@@ -210,16 +226,16 @@ class ChatProvider extends ChangeNotifier {
 
       try {
         final savedTxns = await _db.getTransactionsSync(groupId);
-      final monthExpenses = savedTxns
-          .where((t) =>
-              t.isExpense &&
-              t.date.year == DateTime.now().year &&
-              t.date.month == DateTime.now().month)
-          .fold<double>(0.0, (sum, t) => sum + t.amount);
-      await _sendSystemMessage(
-        groupId,
-        '✅ تم حفظ المصروف في سجل الحسابات الحقيقي:\n${_formatExpenseText(aiResult)}\nعدد العمليات المحفوظة الآن: ${savedTxns.length}\nإجمالي مصروفات الشهر: ${monthExpenses.toStringAsFixed(0)} ج',
-      );
+        final monthExpenses = savedTxns
+            .where((t) =>
+                t.isExpense &&
+                t.date.year == DateTime.now().year &&
+                t.date.month == DateTime.now().month)
+            .fold<double>(0.0, (sum, t) => sum + t.amount);
+        await _sendSystemMessage(
+          groupId,
+          '✅ تم حفظ المصروف في سجل الحسابات الحقيقي:\n${_formatExpenseText(aiResult)}\nعدد العمليات المحفوظة الآن: ${savedTxns.length}\nإجمالي مصروفات الشهر: ${monthExpenses.toStringAsFixed(0)} ج',
+        );
       } catch (_) {
         await _sendSystemMessage(
           groupId,
@@ -249,6 +265,11 @@ class ChatProvider extends ChangeNotifier {
         await _db.deleteTransaction(groupId, message.transactionId!);
     if (deleted == null)
       return 'لم أجد المصروف في السجلات. ربما تم حذفه من قبل.';
+    if (deleted.isExpense &&
+        deleted.walletId != null &&
+        deleted.walletId!.isNotEmpty) {
+      await _db.applyWalletDelta(groupId, deleted.walletId!, deleted.amount);
+    }
 
     await _db.markTransactionMessageDeleted(groupId, message.transactionId!);
     await _db.addFamilyNotification(FamilyNotificationModel(
@@ -307,12 +328,9 @@ class ChatProvider extends ChangeNotifier {
     await _db.sendMessage(systemMsg);
   }
 
-  Future<String?> _sendMultipleParsedEntries(
-    String groupId,
-    UserModel user,
-    String originalText,
-    List<Map<String, dynamic>> results,
-  ) async {
+  Future<String?> _sendMultipleParsedEntries(String groupId, UserModel user,
+      String originalText, List<Map<String, dynamic>> results,
+      {WalletModel? wallet}) async {
     final hasExpense = results.any((r) => r['isExpense'] == true);
     if (hasExpense && !user.canAddExpenses) {
       final warning =
@@ -374,16 +392,23 @@ class ChatProvider extends ChangeNotifier {
         timestamp: DateTime.now(),
       );
       await _db.sendMessage(message);
+      final isExpense = result['isExpense'] as bool;
+      final amount = result['amount'] as double;
       await _db.addTransaction(TransactionModel(
         id: transactionId,
         groupId: groupId,
         userId: transactionUserId,
         userName: transactionUserName,
-        amount: result['amount'] as double,
+        amount: amount,
         category: result['category'] as String,
-        isExpense: result['isExpense'] as bool,
+        isExpense: isExpense,
         note: result['note'] as String?,
+        walletId: isExpense ? wallet?.id : null,
+        walletName: isExpense ? wallet?.name : null,
       ));
+      if (isExpense && wallet != null) {
+        await _db.applyWalletDelta(groupId, wallet.id, -amount);
+      }
     }
 
     await _db.addFamilyNotification(FamilyNotificationModel(
