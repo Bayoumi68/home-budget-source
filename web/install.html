@@ -12,7 +12,7 @@
     body{font-family:Arial,Tahoma,sans-serif;background:#f6f2ea;color:#053f38;margin:0;padding:22px}
     .card{max-width:520px;margin:auto;background:white;border-radius:18px;padding:22px;box-shadow:0 4px 18px #0002}
     h1{font-size:24px;margin-top:0}.btn{display:block;width:100%;box-sizing:border-box;text-align:center;margin:12px 0;padding:14px 16px;border-radius:14px;text-decoration:none;border:0;font-size:18px;font-weight:bold}
-    .download{background:#087464;color:white}.open{background:#d9b45b;color:#173c35}.web{background:#173c35;color:white}.note{font-size:14px;color:#555;line-height:1.7}.warn{background:#fff5d8;border-radius:12px;padding:10px;color:#5b4100} code{direction:ltr;display:block;background:#eee;padding:10px;border-radius:10px;overflow-wrap:anywhere}
+    .download{background:#087464;color:white}.open{background:#d9b45b;color:#173c35}.web{background:#173c35;color:white}.copy{background:#eee;color:#173c35}.note{font-size:14px;color:#555;line-height:1.7}.warn{background:#fff5d8;border-radius:12px;padding:10px;color:#5b4100} code{direction:ltr;display:block;background:#eee;padding:10px;border-radius:10px;overflow-wrap:anywhere;text-align:center;font-size:20px;font-weight:bold;letter-spacing:2px}
   </style>
 </head>
 <body>
@@ -23,8 +23,10 @@
     <a id="androidBtn" class="btn download" href="/download.html" target="_blank" rel="noopener">اختياري: تحميل Android APK</a>
     <button id="openBtn" class="btn open" onclick="openInvite()">اختياري: فتح الدعوة في تطبيق أندرويد المثبت</button>
     <p id="platformNote" class="note warn"></p>
-    <p class="note">لو زر الفتح لم يعمل، افتح التطبيق يدويًا واكتب كود الدعوة التالي:</p>
+    <p class="note">لو زر الفتح لم يعمل، افتح التطبيق يدويًا واكتب رقم تليفونك المسجل عند قائد العائلة وكود الدعوة التالي:</p>
     <code id="codeBox"></code>
+    <button id="copyCodeBtn" class="btn copy" onclick="copyInviteCode()">نسخ كود الدعوة فقط</button>
+    <p id="copyNote" class="note"></p>
   </div>
 <script>
   const params = new URLSearchParams(location.search);
@@ -59,13 +61,21 @@
     document.getElementById('openBtn').style.display = 'none';
     document.getElementById('codeBox').previousElementSibling.style.display = 'none';
     document.getElementById('codeBox').style.display = 'none';
+    document.getElementById('copyCodeBtn').style.display = 'none';
   }
   document.getElementById('codeBox').textContent = code || 'لا يوجد كود في الرابط';
+  async function copyInviteCode(){
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      document.getElementById('copyNote').textContent = 'تم نسخ كود الدعوة فقط.';
+    } catch (e) {
+      document.getElementById('copyNote').textContent = 'لو النسخ لم يعمل، اضغط مطولًا على الكود وانسخه.';
+    }
+  }
   function openInvite(){
-    const name = encodeURIComponent(params.get('name') || '');
-    const phone = encodeURIComponent(params.get('phone') || '');
     const groupId = encodeURIComponent(params.get('groupId') || params.get('familyId') || '');
-    location.href = `budgethome://join?invite=${encodeURIComponent(code)}&groupId=${groupId}&name=${name}&phone=${phone}&auto=1`;
+    location.href = `budgethome://join?invite=${encodeURIComponent(code)}&groupId=${groupId}&auto=1`;
   }
 </script>
 </body>

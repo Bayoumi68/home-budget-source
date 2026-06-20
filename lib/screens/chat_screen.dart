@@ -581,6 +581,17 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         },
       );
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      if (mounted && _isRecording && !_voiceService.isListening) {
+        setState(() => _isRecording = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'الميكروفون أخذ الإذن لكن خدمة التعرف الصوتي لم تبدأ. حدّث Google Speech Services أو استخدم ميكروفون الكيبورد/الكتابة.',
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _isRecording = false);
@@ -912,7 +923,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               : _isPreparingVoice
                                   ? 'جاري تجهيز التسجيل الصوتي...'
                                   : _isRecording
-                                      ? 'استمر ضاغطًا وتكلم، وارفع صباعك عند الانتهاء.'
+                                      ? 'جاري الاستماع... اضغط زر الميكروفون مرة أخرى عند الانتهاء.'
                                       : 'جاري تحديث بيانات العائلة...',
                       textDirection: ui.TextDirection.rtl,
                       style: const TextStyle(

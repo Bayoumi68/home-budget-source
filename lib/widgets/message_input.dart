@@ -48,14 +48,14 @@ class MessageInput extends StatelessWidget {
         child: Row(
           children: [
             GestureDetector(
-              onTap: enabled && !isSending && kIsWeb ? onMic : null,
-              onTapDown: enabled && !isSending && !kIsWeb
+              onTap: enabled && !isSending ? onMic : null,
+              onLongPressStart: enabled && !isSending && !kIsWeb
                   ? (_) => (onMicDown ?? onMic)()
                   : null,
-              onTapUp: enabled && !isSending && !kIsWeb
+              onLongPressEnd: enabled && !isSending && !kIsWeb
                   ? (_) => (onMicUp ?? onMic)()
                   : null,
-              onTapCancel: enabled && !isSending && !kIsWeb
+              onLongPressCancel: enabled && !isSending && !kIsWeb
                   ? () => (onMicCancel ?? onMicUp ?? onMic)()
                   : null,
               child: Container(
@@ -97,7 +97,7 @@ class MessageInput extends StatelessWidget {
                   onChanged: onChanged,
                   decoration: InputDecoration(
                     hintText: isRecording
-                        ? 'جاري الاستماع... قل مثلًا: دفعت 250 سوبر ماركت'
+                        ? 'جاري الاستماع... اضغط الميكروفون مرة أخرى عند الانتهاء'
                         : enabled
                             ? 'اكتب الرسالة ثم أرسل بالسهم'
                             : 'صلاحية تسجيل المصاريف غير مفعلة لك',
