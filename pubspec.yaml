@@ -1,7 +1,7 @@
 name: budget_home
 description: AI-powered family budget manager with chat-first interface.
 publish_to: 'none'
-version: 1.0.13+2013
+version: 1.0.14+2014
 
 environment:
   sdk: ^3.2.0

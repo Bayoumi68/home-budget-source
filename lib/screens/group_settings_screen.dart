@@ -488,7 +488,13 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                       title: Text(wallet.name),
                       subtitle:
                           Text('الرصيد ${wallet.balance.toStringAsFixed(0)} ج'),
-                      trailing: const Icon(Icons.edit_rounded),
+                      trailing: TextButton.icon(
+                        icon: const Icon(Icons.edit_rounded),
+                        label: const Text('تحديد رصيد'),
+                        onPressed: budget.loading
+                            ? null
+                            : () => _showEditWalletDialog(wallet),
+                      ),
                       onTap: budget.loading
                           ? null
                           : () => _showEditWalletDialog(wallet),
