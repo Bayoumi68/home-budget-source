@@ -69,8 +69,6 @@ class _AuthScreenState extends State<AuthScreen> {
     final params = uri.queryParameters;
     final invite = params['invite'] ?? params['code'];
     final groupId = params['groupId'] ?? params['familyId'];
-    final name = params['name'];
-    final phone = params['phone'];
     if (invite != null && invite.trim().isNotEmpty) {
       _inviteController.text = invite.trim().toUpperCase();
       _inviteFromLink = true;
@@ -81,22 +79,15 @@ class _AuthScreenState extends State<AuthScreen> {
       _inviteFromLink = true;
       _mode = 1;
     }
-    if (name != null && name.trim().isNotEmpty) {
-      _nameController.text = Uri.decodeComponent(name.trim());
-    }
-    if (phone != null && phone.trim().isNotEmpty) {
-      _phoneController.text = Uri.decodeComponent(phone.trim());
-    }
   }
 
   Future<void> _autoJoinFromPrefilledInvite({bool force = false}) async {
     if (_autoJoinStarted && !force) return;
     final hasInviteTarget = _inviteController.text.trim().isNotEmpty ||
         (_inviteGroupId ?? '').trim().isNotEmpty;
-    final hasName = _nameController.text.trim().isNotEmpty;
     final hasPhone =
         _authService.normalizePhone(_phoneController.text.trim()).length >= 8;
-    if (!hasInviteTarget || !hasName || !hasPhone || _busy) return;
+    if (!hasInviteTarget || !hasPhone || _busy) return;
     _autoJoinStarted = true;
     await _joinGroup(auto: true);
   }
@@ -170,8 +161,13 @@ class _AuthScreenState extends State<AuthScreen> {
       final auth = context.read<AuthProvider>();
       await auth.ensureFirebaseIdentity();
       final user = auth.createUser(name, phone: phone, isAdmin: true);
-      final group =
-          await _db.createGroup(groupName, user.id, name, adminPhone: phone);
+      final group = await _db.createGroup(
+        groupName,
+        user.id,
+        name,
+        adminPhone: phone,
+        adminAuthUid: user.authUid,
+      );
       await auth.setSession(user, group);
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/chat', arguments: {
@@ -185,8 +181,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _joinGroup({bool auto = false}) async {
-    if (!_validateBasic(joining: true) || _busy) return;
-    final name = _nameController.text.trim();
+    if (!_validateBasic(joining: true, requireName: false) || _busy) return;
     final phone = _authService.normalizePhone(_phoneController.text.trim());
     final code = _inviteController.text.trim().toUpperCase();
     final inviteGroupId = (_inviteGroupId ?? '').trim();
@@ -196,8 +191,7 @@ class _AuthScreenState extends State<AuthScreen> {
       final verified = await _verifyPhoneWithDemoWhatsApp(phone);
       if (!verified) return;
       final auth = context.read<AuthProvider>();
-      await auth.ensureFirebaseIdentity();
-      final user = auth.createUser(name, phone: phone);
+      final uid = await auth.ensureFirebaseIdentity();
 
       var group =
           inviteGroupId.isEmpty ? null : await _db.getGroupById(inviteGroupId);
@@ -213,9 +207,9 @@ class _AuthScreenState extends State<AuthScreen> {
             'رقمك غير موجود ضمن أعضاء هذه العائلة. راجع قائد العائلة أولًا.');
         return;
       }
-      await _db.joinGroup(group.id, user);
-      final joinedUser =
-          preparedMember.copyWith(id: user.id, name: name, phone: phone);
+      final joinedUser = uid == null
+          ? preparedMember
+          : await _db.bindMemberAuthUid(group.id, preparedMember, uid);
       await auth.setSession(joinedUser, group);
       if (mounted && auto) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -331,7 +325,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   _modeSelector(),
                   const SizedBox(height: 16),
                 ],
-                if (_mode != 2) ...[
+                if (_mode == 0) ...[
                   _whiteField(_nameController, 'اسمك'),
                   const SizedBox(height: 12),
                 ],
@@ -348,7 +342,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       borderRadius: BorderRadius.circular(18),
                     ),
                     child: const Text(
-                      'تم فتح دعوة العائلة. اكتب الاسم ورقم الموبايل فقط لو مش موجودين، وسنفتح الشات بعد الانضمام.',
+                      'تم فتح دعوة العائلة. اكتب رقم الموبايل المسجل عند قائد العائلة، وسيظهر اسمك كما سجله القائد.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: AppTheme.primaryGreen),
                     ),

@@ -289,6 +289,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
     final message = 'دعوة فرد للانضمام إلى عائلتنا على Budget Home\n\n'
         'افتح الرابط التالي:\n$inviteLanding\n\n'
+        'قبل الإرسال تأكد أن قائد العائلة أضاف رقم تليفون العضو من شاشة الأعضاء.\n'
+        'العضو يكتب رقم تليفونه المسجل وكود الدعوة التالي:\n$code\n\n'
         'افتح نسخة الويب من الصفحة مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
         'أندرويد: APK اختياري لو تريد تجربة تطبيق مثبت أو لو الصوت من المتصفح لم يعمل.\n'
         'آيفون: استخدم الويب، والتسجيل الصوتي قد لا يعمل بسبب قيود Safari.\n\n'

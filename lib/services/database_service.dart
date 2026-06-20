@@ -128,6 +128,7 @@ class DatabaseService {
     String adminId,
     String adminName, {
     String? adminPhone,
+    String? adminAuthUid,
   }) async {
     final id = DateTime.now().millisecondsSinceEpoch.toString();
     final inviteCode = _newInviteCode();
@@ -135,6 +136,7 @@ class DatabaseService {
       id: adminId,
       name: adminName,
       phone: adminPhone,
+      authUid: adminAuthUid,
       isAdmin: true,
       canAddExpenses: true,
       canViewReports: true,

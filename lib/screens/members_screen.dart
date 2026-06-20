@@ -180,17 +180,16 @@ class _MembersScreenState extends State<MembersScreen> {
       return;
     }
     final permissions = _permissionsText(member);
-    final encodedName = Uri.encodeComponent(member.name);
-    final encodedPhone = Uri.encodeComponent(member.phone ?? '');
     final inviteLanding =
-        '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&name=$encodedName&phone=$encodedPhone&v=${Uri.encodeComponent(AppConstants.appVersion)}';
+        '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&v=${Uri.encodeComponent(AppConstants.appVersion)}';
     final message = 'مرحبًا ${member.name},\n'
         'تمت دعوتك للانضمام إلى عائلة ${group?.name ?? ''} على Budget Home.\n\n'
         'افتح الرابط التالي:\n$inviteLanding\n\n'
+        'اكتب رقم تليفونك المسجل عند قائد العائلة وكود الدعوة التالي:\n$code\n\n'
         'افتح نسخة الويب من الصفحة مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
         'أندرويد: APK اختياري لو تريد تجربة تطبيق مثبت أو لو الصوت من المتصفح لم يعمل.\n'
         'آيفون: استخدم الويب، والتسجيل الصوتي قد لا يعمل بسبب قيود Safari.\n'
-        'سيتم الانضمام تلقائيًا بدون كتابة الاسم أو الرقم أو الكود.\n\n'
+        'اسمك داخل التطبيق سيظهر كما سجله قائد العائلة.\n\n'
         'صلاحياتك: $permissions';
     await Clipboard.setData(ClipboardData(text: message));
     final phone = _authService.whatsappPhone(member.phone ?? '');
