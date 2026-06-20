@@ -474,7 +474,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                 if (budget.wallets.isEmpty)
                   const Padding(
                     padding: EdgeInsets.all(12),
-                    child: Text('سيتم إنشاء محفظة أساسية تلقائيًا.'),
+                    child: Text('جاري تجهيز الحساب المنزلي الأساسي...'),
                   )
                 else
                   ...budget.wallets.map(

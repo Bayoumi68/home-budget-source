@@ -111,6 +111,20 @@ void main() {
         AIService.parseExpenseMessages('دفعت 250 حضانة').single['category'],
         'تعليم',
       );
+      expect(
+        AIService.parseExpenseMessages('اشتريت 180 مسحوق غسيل وكلور')
+            .single['category'],
+        'منظفات',
+      );
+      expect(
+        AIService.parseExpenseMessages('دفعت 350 للسباك وتصليح الحنفية')
+            .single['category'],
+        'صيانة',
+      );
+      expect(
+        AIService.parseExpenseMessages('دفعت 120 رسوم رخصة').single['category'],
+        'رسوم وخدمات',
+      );
     });
   });
 }

@@ -3,7 +3,7 @@ class AppConstants {
   static const String appWebLink = 'https://budget-home-family-test.web.app';
   static const String androidDownloadLink =
       'https://budget-home-family-test.web.app/download.html';
-  static const String appVersion = '0.5.12-wallets-release-web-voice-note';
+  static const String appVersion = '0.5.13-default-wallet-dictionary';
   static const String defaultCurrency = 'EGP';
   static const String aiAssistantName = 'مساعد العائلة';
   static const int maxFamilyMembers = 10;
@@ -22,6 +22,11 @@ class AppConstants {
     'تعليم',
     'صحة',
     'ملابس',
+    'منظفات',
+    'صيانة',
+    'أجهزة منزلية',
+    'اشتراكات',
+    'رسوم وخدمات',
     'ترفيه',
     'هدايا',
     'أخرى',
@@ -47,6 +52,11 @@ class AppConstants {
     'تعليم': '📚',
     'صحة': '💊',
     'ملابس': '👕',
+    'منظفات': '🧼',
+    'صيانة': '🛠️',
+    'أجهزة منزلية': '🔌',
+    'اشتراكات': '🧾',
+    'رسوم وخدمات': '🏛️',
     'ترفيه': '🎮',
     'هدايا': '🎁',
     'أخرى': '📌',

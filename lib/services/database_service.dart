@@ -413,21 +413,30 @@ class DatabaseService {
 
   // ─── Wallets ───
   Future<List<WalletModel>> getWalletsSync(String groupId) async {
-    final q = await _wallets(groupId).orderBy('createdAt').get();
-    if (q.docs.isEmpty) {
-      final wallet = WalletModel(
-        id: 'default',
-        name: 'المحفظة الأساسية',
-        balance: 0,
-        isDefault: true,
-      );
-      await _wallets(groupId).doc(wallet.id).set({
-        ...wallet.toMap(),
-        'createdAt': DateTime.now().toIso8601String(),
+    final q = await _wallets(groupId).get();
+    final defaultRef = _wallets(groupId).doc('default');
+    final hasDefault = q.docs.any((doc) => doc.id == 'default');
+    if (!hasDefault) {
+      final now = DateTime.now().toIso8601String();
+      await defaultRef.set({
+        'id': 'default',
+        'name': 'الحساب المنزلي الأساسي',
+        'balance': 0,
+        'isDefault': true,
+        'createdAt': now,
+        'updatedAt': now,
       }, SetOptions(merge: true));
-      return [wallet];
     }
-    final wallets = q.docs.map((d) => WalletModel.fromMap(d.data())).toList();
+
+    final latest = await _wallets(groupId).get();
+    final wallets = latest.docs.map((d) {
+      final data = d.data();
+      return WalletModel.fromMap({
+        ...data,
+        'id': (data['id'] ?? d.id).toString(),
+        'name': (data['name'] ?? d.id).toString(),
+      });
+    }).toList();
     wallets.sort((a, b) {
       if (a.isDefault && !b.isDefault) return -1;
       if (!a.isDefault && b.isDefault) return 1;
@@ -439,13 +448,14 @@ class DatabaseService {
   Future<void> addWallet(String groupId, String name, double balance) async {
     final clean = name.trim().isEmpty ? 'محفظة جديدة' : name.trim();
     final id = _docSafeId(clean);
+    final now = DateTime.now().toIso8601String();
     await _wallets(groupId).doc(id).set({
       'id': id,
       'name': clean,
       'balance': balance,
       'isDefault': false,
-      'createdAt': DateTime.now().toIso8601String(),
-      'updatedAt': DateTime.now().toIso8601String(),
+      'createdAt': now,
+      'updatedAt': now,
     }, SetOptions(merge: true));
   }
 
