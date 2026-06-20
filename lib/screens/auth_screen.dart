@@ -33,6 +33,7 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _autoJoinStarted = false;
   bool _inviteFromLink = false;
   String? _inviteGroupId;
+  int _mode = 0; // 0 create, 1 join by invite, 2 existing family
 
   @override
   void initState() {
@@ -73,10 +74,12 @@ class _AuthScreenState extends State<AuthScreen> {
     if (invite != null && invite.trim().isNotEmpty) {
       _inviteController.text = invite.trim().toUpperCase();
       _inviteFromLink = true;
+      _mode = 1;
     }
     if (groupId != null && groupId.trim().isNotEmpty) {
       _inviteGroupId = groupId.trim();
       _inviteFromLink = true;
+      _mode = 1;
     }
     if (name != null && name.trim().isNotEmpty) {
       _nameController.text = Uri.decodeComponent(name.trim());
@@ -109,10 +112,10 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  bool _validateBasic({bool joining = false}) {
+  bool _validateBasic({bool joining = false, bool requireName = true}) {
     final name = _nameController.text.trim();
     final phone = _authService.normalizePhone(_phoneController.text.trim());
-    if (name.isEmpty) {
+    if (requireName && name.isEmpty) {
       _snack('اكتب اسمك الأول');
       return false;
     }
@@ -203,10 +206,14 @@ class _AuthScreenState extends State<AuthScreen> {
       }
 
       final preparedMember = await _db.getMemberByPhone(group.id, phone);
+      if (preparedMember == null) {
+        _snack(
+            'رقمك غير موجود ضمن أعضاء هذه العائلة. راجع قائد العائلة أولًا.');
+        return;
+      }
       await _db.joinGroup(group.id, user);
-      final joinedUser = preparedMember == null
-          ? user
-          : preparedMember.copyWith(id: user.id, name: name, phone: phone);
+      final joinedUser =
+          preparedMember.copyWith(id: user.id, name: name, phone: phone);
       await auth.setSession(joinedUser, group);
       if (mounted && auto) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -215,6 +222,39 @@ class _AuthScreenState extends State<AuthScreen> {
                   'تم انضمام ${joinedUser.name} لعائلة ${group.name} تلقائيًا')),
         );
       }
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/chat', arguments: {
+          'groupId': group.id,
+          'groupName': group.name,
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openExistingFamily() async {
+    if (!_validateBasic(requireName: false) || _busy) return;
+    final familyName = _groupNameController.text.trim();
+    final phone = _authService.normalizePhone(_phoneController.text.trim());
+    if (familyName.isEmpty) {
+      _snack('اكتب اسم العائلة');
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      final group = await _db.getGroupByName(familyName);
+      if (group == null) {
+        _snack('لم أجد عائلة بهذا الاسم. راجع قائد العائلة.');
+        return;
+      }
+      final member = await _db.getMemberByPhone(group.id, phone);
+      if (member == null) {
+        _snack('رقمك غير موجود في هذه العائلة. راجع قائد العائلة.');
+        return;
+      }
+      await context.read<AuthProvider>().setSession(member, group);
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/chat', arguments: {
           'groupId': group.id,
@@ -275,12 +315,19 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'ادخل برقم موبايلك. اختبار Firebase مباشر: أنشئ عائلة جديدة وسيظهر أثرها فورًا في Firestore.',
+                  'اختر ما تريد: إنشاء عائلة جديدة، الانضمام بدعوة، أو فتح عائلة موجودة.',
                   style: TextStyle(fontSize: 15, color: Colors.white70),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 28),
-                _whiteField(_nameController, 'اسمك'),
+                if (!inviteMode) ...[
+                  _modeSelector(),
+                  const SizedBox(height: 16),
+                ],
+                if (_mode != 2) ...[
+                  _whiteField(_nameController, 'اسمك'),
+                  const SizedBox(height: 12),
+                ],
                 const SizedBox(height: 12),
                 _whiteField(_phoneController, 'رقم الموبايل 010... أو +20...',
                     keyboardType: TextInputType.phone, rtl: false),
@@ -299,15 +346,19 @@ class _AuthScreenState extends State<AuthScreen> {
                       style: TextStyle(color: AppTheme.primaryGreen),
                     ),
                   ),
-                ] else ...[
+                ] else if (_mode == 0) ...[
                   const SizedBox(height: 12),
-                  _whiteField(_groupNameController, 'اسم العائلة عند الإنشاء'),
+                  _whiteField(_groupNameController, 'اسم العائلة الجديدة'),
+                ] else if (_mode == 1) ...[
                   const SizedBox(height: 12),
                   _whiteField(
                       _inviteController, 'كود الدعوة عند الانضمام لعائلة'),
+                ] else ...[
+                  const SizedBox(height: 12),
+                  _whiteField(_groupNameController, 'اسم العائلة الموجودة'),
                 ],
                 const SizedBox(height: 24),
-                if (!inviteMode) ...[
+                if (!inviteMode && _mode == 0) ...[
                   SizedBox(
                     width: double.infinity,
                     height: 52,
@@ -332,34 +383,94 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : () => _joinGroup(),
-                    icon: _busy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.login_rounded),
-                    label: Text(
-                        inviteMode ? 'الانضمام للدعوة' : 'انضمام لعائلة',
-                        style: const TextStyle(fontSize: 18)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.white),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24)),
+                if (!inviteMode && _mode == 2) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      onPressed: _busy ? null : _openExistingFamily,
+                      icon: _busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.home_rounded),
+                      label: const Text('فتح عائلتي',
+                          style: TextStyle(fontSize: 18)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.accentTeal,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24)),
+                      ),
                     ),
                   ),
-                ),
+                ],
+                if (inviteMode || _mode == 1)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: OutlinedButton.icon(
+                      onPressed: _busy ? null : () => _joinGroup(),
+                      icon: _busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.login_rounded),
+                      label: Text(
+                          inviteMode ? 'الانضمام للدعوة' : 'انضمام لعائلة',
+                          style: const TextStyle(fontSize: 18)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24)),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _modeSelector() {
+    Widget chip(int value, String label, IconData icon) {
+      final selected = _mode == value;
+      return Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: ChoiceChip(
+            selected: selected,
+            showCheckmark: false,
+            avatar: Icon(icon,
+                size: 18,
+                color: selected ? AppTheme.primaryGreen : Colors.white),
+            label: Text(label, textAlign: TextAlign.center),
+            labelStyle: TextStyle(
+              color: selected ? AppTheme.primaryGreen : Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+            selectedColor: Colors.white,
+            backgroundColor: AppTheme.primaryDark,
+            onSelected: (_) => setState(() => _mode = value),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        chip(0, 'إنشاء', Icons.group_add_rounded),
+        chip(1, 'انضمام', Icons.login_rounded),
+        chip(2, 'لدي عائلة', Icons.home_rounded),
+      ],
     );
   }
 

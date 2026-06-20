@@ -181,6 +181,14 @@ class DatabaseService {
     return GroupModel.fromMap(q.docs.first.data());
   }
 
+  Future<GroupModel?> getGroupByName(String name) async {
+    final clean = name.trim();
+    if (clean.isEmpty) return null;
+    final q = await _families.where('name', isEqualTo: clean).limit(1).get();
+    if (q.docs.isEmpty) return null;
+    return GroupModel.fromMap(q.docs.first.data());
+  }
+
   Future<GroupModel?> getGroupById(String groupId) async {
     final doc = await _families.doc(groupId).get();
     if (!doc.exists || doc.data() == null) return null;
