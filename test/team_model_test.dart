@@ -19,6 +19,28 @@ void main() {
     expect(team.canManage('other', isAdmin: true), isTrue);
   });
 
+  test('TeamModel stores balance and falls back from old limit field', () {
+    final team = TeamModel(
+      id: 'cars',
+      groupId: 'family',
+      name: 'السيارات',
+      ownerId: 'admin',
+      ownerName: 'كمال',
+      balance: 1000,
+    );
+    final legacy = TeamModel.fromMap({
+      'id': 'old-cars',
+      'groupId': 'family',
+      'name': 'السيارات القديمة',
+      'ownerId': 'admin',
+      'ownerName': 'كمال',
+      'limit': 750,
+    });
+
+    expect(team.toMap()['balance'], 1000);
+    expect(legacy.balance, 750);
+  });
+
   test('TransactionModel keeps team expense metadata optional', () {
     final teamTxn = TransactionModel(
       id: 't1',

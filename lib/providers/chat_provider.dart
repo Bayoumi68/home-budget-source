@@ -173,7 +173,7 @@ class ChatProvider extends ChangeNotifier {
       }
 
       if (isExpense && team != null) {
-        final warning = await _validateTeamLimit(groupId, team, amount);
+        final warning = _validateTeamBalance(team, amount);
         if (warning != null) {
           await _sendSystemMessage(groupId, warning);
           await refreshMessages(groupId);
@@ -398,7 +398,7 @@ class ChatProvider extends ChangeNotifier {
     }
 
     if (team != null && hasExpense) {
-      final warning = await _validateTeamLimit(groupId, team, totalExpense);
+      final warning = _validateTeamBalance(team, totalExpense);
       if (warning != null) {
         await _sendSystemMessage(groupId, warning);
         await refreshMessages(groupId);
@@ -475,17 +475,12 @@ class ChatProvider extends ChangeNotifier {
     return null;
   }
 
-  Future<String?> _validateTeamLimit(
-    String groupId,
-    TeamModel team,
-    double newExpense,
-  ) async {
-    if (team.limit <= 0) return null;
-    final txns = await _db.getTeamTransactions(groupId, team.id);
-    final spent = _db.spentForTeamPeriod(txns, team);
-    if (spent + newExpense <= team.limit) return null;
-    final remaining = team.limit - spent;
-    return '⚠️ مصروف فريق ${team.name} يتجاوز الحد ${team.periodLabel}. المتبقي تقريبًا ${remaining.toStringAsFixed(0)} ج.';
+  String? _validateTeamBalance(TeamModel team, double newExpense) {
+    if (team.balance <= 0) {
+      return '⚠️ رصيد فريق ${team.name} غير كافي. زوّد رصيد الفريق قبل تسجيل المصروف.';
+    }
+    if (newExpense <= team.balance) return null;
+    return '⚠️ رصيد فريق ${team.name} غير كافي. المتاح ${team.balance.toStringAsFixed(0)} ج والمصروف ${newExpense.toStringAsFixed(0)} ج.';
   }
 
   Future<String?> _sendTeamParsedEntries(
@@ -516,6 +511,7 @@ class ChatProvider extends ChangeNotifier {
         teamName: team.name,
       );
       await _db.addTransaction(transaction);
+      await _db.applyTeamBalanceDelta(groupId, team.id, -amount);
       if (wallet != null) {
         await _db.applyWalletDelta(groupId, wallet.id, -amount);
       }

@@ -407,8 +407,7 @@ class DatabaseService {
     String groupId, {
     required String name,
     required UserModel owner,
-    required double limit,
-    String period = 'monthly',
+    required double balance,
     List<UserModel> members = const [],
   }) async {
     final clean = name.trim().isEmpty ? 'فريق جديد' : name.trim();
@@ -424,8 +423,7 @@ class DatabaseService {
       name: clean,
       ownerId: owner.id,
       ownerName: owner.name,
-      limit: limit,
-      period: _normalizeBudgetPeriod(period),
+      balance: balance,
       memberIds: selected.keys.toList(),
       memberNames: selected.map((id, member) => MapEntry(id, member.name)),
       createdAt: now,
@@ -439,8 +437,7 @@ class DatabaseService {
     String groupId,
     TeamModel team, {
     String? name,
-    double? limit,
-    String? period,
+    double? balance,
     List<UserModel>? members,
   }) async {
     final selected = members == null
@@ -450,8 +447,7 @@ class DatabaseService {
           };
     await _teams(groupId).doc(team.id).set({
       if (name != null) 'name': name.trim().isEmpty ? team.name : name.trim(),
-      if (limit != null) 'limit': limit,
-      if (period != null) 'period': _normalizeBudgetPeriod(period),
+      if (balance != null) 'balance': balance,
       if (selected != null) 'memberIds': selected.keys.toList(),
       if (selected != null)
         'memberNames': selected.map((id, member) => MapEntry(id, member.name)),
@@ -486,18 +482,26 @@ class DatabaseService {
   ) async {
     final q = await _transactions(groupId)
         .where('teamId', isEqualTo: teamId)
-        .orderBy('date', descending: true)
         .limit(500)
         .get();
-    return q.docs.map((d) => TransactionModel.fromMap(d.data())).toList();
+    final txns = q.docs.map((d) => TransactionModel.fromMap(d.data())).toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+    return txns;
   }
 
-  double spentForTeamPeriod(List<TransactionModel> txns, TeamModel team) {
-    final start = _periodStart(team.period);
-    return txns.where((t) {
-      final txDay = DateTime(t.date.year, t.date.month, t.date.day);
-      return t.isExpense && !txDay.isBefore(start);
-    }).fold<double>(0.0, (sum, t) => sum + t.amount);
+  Future<void> applyTeamBalanceDelta(
+      String groupId, String teamId, double delta) async {
+    if (teamId.trim().isEmpty) return;
+    await _teams(groupId).doc(teamId).set({
+      'balance': FieldValue.increment(delta),
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  double spentForTeam(List<TransactionModel> txns) {
+    return txns
+        .where((t) => t.isExpense)
+        .fold<double>(0.0, (sum, t) => sum + t.amount);
   }
 
   // ─── Messages ───

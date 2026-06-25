@@ -26,6 +26,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
   final _db = DatabaseService();
   final _money = NumberFormat('#,###');
   bool _loading = true;
+  String? _error;
   List<UserModel> _members = [];
   List<TeamModel> _teams = [];
   final Map<String, List<TransactionModel>> _teamTxns = {};
@@ -38,25 +39,37 @@ class _TeamsScreenState extends State<TeamsScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final auth = context.read<AuthProvider>();
-    final user = auth.user;
-    final members = await _db.getMembersSync(widget.groupId);
-    final teams = user == null
-        ? <TeamModel>[]
-        : await _db.getVisibleTeams(widget.groupId, user);
-    final txns = <String, List<TransactionModel>>{};
-    for (final team in teams) {
-      txns[team.id] = await _db.getTeamTransactions(widget.groupId, team.id);
+    try {
+      final auth = context.read<AuthProvider>();
+      final user = auth.user;
+      final members = await _db.getMembersSync(widget.groupId);
+      final teams = user == null
+          ? <TeamModel>[]
+          : await _db.getVisibleTeams(widget.groupId, user);
+      final txnLists = await Future.wait(
+        teams.map((team) => _db.getTeamTransactions(widget.groupId, team.id)),
+      );
+      final txns = <String, List<TransactionModel>>{};
+      for (var i = 0; i < teams.length; i++) {
+        txns[teams[i].id] = txnLists[i];
+      }
+      if (!mounted) return;
+      setState(() {
+        _members = members;
+        _teams = teams;
+        _teamTxns
+          ..clear()
+          ..addAll(txns);
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'تعذر تحميل الفرق الآن. حاول مرة أخرى.\n$e';
+        _loading = false;
+      });
     }
-    if (!mounted) return;
-    setState(() {
-      _members = members;
-      _teams = teams;
-      _teamTxns
-        ..clear()
-        ..addAll(txns);
-      _loading = false;
-    });
   }
 
   bool _canManageTeam(TeamModel team) {
@@ -85,55 +98,74 @@ class _TeamsScreenState extends State<TeamsScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _teams.isEmpty
+          : _error != null
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.groups_2_rounded,
-                            size: 54, color: AppTheme.primaryLight),
+                        const Icon(Icons.error_outline_rounded,
+                            size: 48, color: AppTheme.expenseRed),
                         const SizedBox(height: 12),
-                        const Text(
-                          'لا توجد فرق بعد',
-                          style: TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold),
+                        Text(_error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _load,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('إعادة المحاولة'),
                         ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'أنشئ فريقًا مثل السيارات وحدد أعضاءه وحد مصروفاته.',
-                          textAlign: TextAlign.center,
-                        ),
-                        if (canCreate) ...[
-                          const SizedBox(height: 16),
-                          FilledButton.icon(
-                            onPressed: _showTeamDialog,
-                            icon: const Icon(Icons.add_rounded),
-                            label: const Text('إنشاء فريق'),
-                          ),
-                        ],
                       ],
                     ),
                   ),
                 )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _teams.length,
-                    itemBuilder: (context, index) =>
-                        _buildTeamCard(_teams[index]),
-                  ),
-                ),
+              : _teams.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.groups_2_rounded,
+                                size: 54, color: AppTheme.primaryLight),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'لا توجد فرق بعد',
+                              style: TextStyle(
+                                  fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'أنشئ فريقًا مثل السيارات وحدد أعضاءه ورصيده.',
+                              textAlign: TextAlign.center,
+                            ),
+                            if (canCreate) ...[
+                              const SizedBox(height: 16),
+                              FilledButton.icon(
+                                onPressed: _showTeamDialog,
+                                icon: const Icon(Icons.add_rounded),
+                                label: const Text('إنشاء فريق'),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _teams.length,
+                        itemBuilder: (context, index) =>
+                            _buildTeamCard(_teams[index]),
+                      ),
+                    ),
     );
   }
 
   Widget _buildTeamCard(TeamModel team) {
     final txns = _teamTxns[team.id] ?? const <TransactionModel>[];
-    final spent = _db.spentForTeamPeriod(txns, team);
-    final progress =
-        team.limit > 0 ? (spent / team.limit).clamp(0.0, 1.0).toDouble() : 0.0;
+    final spent = _db.spentForTeam(txns);
     final byMember = <String, double>{};
     for (final txn in txns.where((t) => t.isExpense)) {
       byMember[txn.userName] = (byMember[txn.userName] ?? 0) + txn.amount;
@@ -146,18 +178,16 @@ class _TeamsScreenState extends State<TeamsScreen> {
         leading: const Icon(Icons.groups_2_rounded),
         title: Text(team.name,
             style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text(team.limit > 0
-            ? 'حد ${team.periodLabel}: ${_money.format(team.limit)} ج - صرف: ${_money.format(spent)} ج'
-            : 'بدون حد مصروفات'),
+        subtitle: Text(
+            'الرصيد: ${_money.format(team.balance)} ج - إجمالي المصروفات: ${_money.format(spent)} ج'),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         children: [
-          if (team.limit > 0) ...[
-            LinearProgressIndicator(
-              value: progress,
-              color: progress > .85 ? AppTheme.expenseRed : AppTheme.accentTeal,
-            ),
-            const SizedBox(height: 10),
-          ],
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.account_balance_wallet_rounded),
+            title: Text('رصيد الفريق الحالي: ${_money.format(team.balance)} ج'),
+            subtitle: const Text('يمكن زيادة الرصيد من تعديل الفريق'),
+          ),
           Align(
             alignment: Alignment.centerRight,
             child: Wrap(
@@ -283,11 +313,10 @@ class _TeamsScreenState extends State<TeamsScreen> {
     final owner = auth.user;
     if (owner == null) return;
     final nameController = TextEditingController(text: team?.name ?? '');
-    final limitController = TextEditingController(
-        text: team == null || team.limit <= 0
+    final balanceController = TextEditingController(
+        text: team == null || team.balance <= 0
             ? ''
-            : team.limit.toStringAsFixed(0));
-    var period = team?.period ?? 'monthly';
+            : team.balance.toStringAsFixed(0));
     final selectedIds = <String>{
       owner.id,
       ...?team?.memberIds,
@@ -311,24 +340,13 @@ class _TeamsScreenState extends State<TeamsScreen> {
                 ),
                 const SizedBox(height: 10),
                 TextField(
-                  controller: limitController,
+                  controller: balanceController,
                   keyboardType: TextInputType.number,
                   textDirection: ui.TextDirection.ltr,
                   decoration: const InputDecoration(
-                    labelText: 'حد المصروف',
+                    labelText: 'رصيد الفريق',
                     border: OutlineInputBorder(),
                   ),
-                ),
-                const SizedBox(height: 10),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'daily', label: Text('يومي')),
-                    ButtonSegment(value: 'weekly', label: Text('أسبوعي')),
-                    ButtonSegment(value: 'monthly', label: Text('شهري')),
-                  ],
-                  selected: {period},
-                  onSelectionChanged: (values) =>
-                      setDialogState(() => period = values.first),
                 ),
                 const SizedBox(height: 10),
                 const Align(
@@ -371,19 +389,18 @@ class _TeamsScreenState extends State<TeamsScreen> {
       ),
     );
     nameController.dispose();
-    limitController.dispose();
+    balanceController.dispose();
     if (saved != true) return;
 
     final selectedMembers =
         _members.where((member) => selectedIds.contains(member.id)).toList();
-    final limit = double.tryParse(limitController.text.trim()) ?? 0;
+    final balance = double.tryParse(balanceController.text.trim()) ?? 0;
     if (team == null) {
       await _db.addTeam(
         widget.groupId,
         name: nameController.text,
         owner: owner,
-        limit: limit,
-        period: period,
+        balance: balance,
         members: selectedMembers,
       );
     } else {
@@ -391,8 +408,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
         widget.groupId,
         team,
         name: nameController.text,
-        limit: limit,
-        period: period,
+        balance: balance,
         members: selectedMembers,
       );
     }
@@ -419,6 +435,9 @@ class _TeamsScreenState extends State<TeamsScreen> {
     );
     if (ok != true) return;
     final deleted = await _db.deleteTransaction(widget.groupId, txn.id);
+    if (deleted != null) {
+      await _db.applyTeamBalanceDelta(widget.groupId, team.id, deleted.amount);
+    }
     if (deleted?.walletId != null && deleted!.walletId!.isNotEmpty) {
       await _db.applyWalletDelta(
         widget.groupId,
@@ -488,7 +507,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
     final message = 'تمت إضافتك إلى فريق ${team.name} داخل Budget Home.\n\n'
         'افتح التطبيق أو الرابط التالي:\n${AppConstants.appWebLink}/install.html\n\n'
         'بعد الدخول للعائلة ستجد الفريق في زر "الفرق".\n'
-        'حد الفريق ${team.periodLabel}: ${team.limit.toStringAsFixed(0)} ج';
+        'رصيد الفريق الحالي: ${team.balance.toStringAsFixed(0)} ج';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =
         Uri.parse('https://wa.me/?text=${Uri.encodeComponent(message)}');

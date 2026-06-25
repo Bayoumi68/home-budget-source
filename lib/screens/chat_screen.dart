@@ -337,9 +337,7 @@ class _ChatScreenState extends State<ChatScreen> {
               (team) => ListTile(
                 leading: const Icon(Icons.groups_2_rounded),
                 title: Text(team.name),
-                subtitle: Text(team.limit > 0
-                    ? 'حد ${team.periodLabel}: ${team.limit.toStringAsFixed(0)} ج'
-                    : 'بدون حد'),
+                subtitle: Text('الرصيد: ${team.balance.toStringAsFixed(0)} ج'),
                 onTap: () => Navigator.pop(ctx, team),
               ),
             ),
