@@ -29,6 +29,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget build(BuildContext context) {
     final provider = context.watch<NotificationProvider>();
     final userId = context.watch<AuthProvider>().user?.id;
+    final items = provider.visibleItems;
     return Scaffold(
       appBar: AppBar(
         title: const Text('إشعارات العائلة'),
@@ -58,12 +59,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
         ],
       ),
-      body: provider.items.isEmpty
+      body: items.isEmpty
           ? const Center(child: Text('لا توجد إشعارات بعد'))
           : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemBuilder: (context, index) {
-                final item = provider.items[index];
+                final item = items[index];
                 final read =
                     userId == null ? item.read : item.isReadFor(userId);
                 return ListTile(
@@ -85,7 +86,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 );
               },
               separatorBuilder: (_, __) => const Divider(height: 1),
-              itemCount: provider.items.length,
+              itemCount: items.length,
             ),
     );
   }

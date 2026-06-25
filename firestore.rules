@@ -116,6 +116,19 @@ service cloud.firestore {
         allow delete: if validGroupId(groupId);
       }
 
+      match /teams/{teamId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && hasGroupField(groupId)
+          && request.resource.data.id == teamId
+          && request.resource.data.name is string
+          && request.resource.data.ownerId is string
+          && request.resource.data.memberIds is list
+          && request.resource.data.limit is number
+          && request.resource.data.limit >= 0;
+        allow delete: if validGroupId(groupId);
+      }
+
       match /notifications/{notificationId} {
         allow read: if validGroupId(groupId);
         allow create, update: if validGroupId(groupId)

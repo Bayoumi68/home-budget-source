@@ -8,6 +8,7 @@ class FamilyNotificationModel {
   final DateTime timestamp;
   final bool read;
   final List<String> readBy;
+  final List<String> targetUserIds;
 
   const FamilyNotificationModel({
     required this.id,
@@ -19,6 +20,7 @@ class FamilyNotificationModel {
     required this.timestamp,
     this.read = false,
     this.readBy = const [],
+    this.targetUserIds = const [],
   });
 
   Map<String, dynamic> toMap() => {
@@ -31,6 +33,7 @@ class FamilyNotificationModel {
         'timestamp': timestamp.toIso8601String(),
         'read': read,
         'readBy': readBy,
+        'targetUserIds': targetUserIds,
       };
 
   factory FamilyNotificationModel.fromMap(Map<String, dynamic> map) =>
@@ -45,7 +48,14 @@ class FamilyNotificationModel {
         read: map['read'] ?? false,
         readBy: (map['readBy'] as List?)?.map((e) => e.toString()).toList() ??
             const [],
+        targetUserIds: (map['targetUserIds'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
       );
+
+  bool isVisibleFor(String userId) =>
+      targetUserIds.isEmpty || targetUserIds.contains(userId);
 
   bool isReadFor(String userId) => read || readBy.contains(userId);
 
@@ -60,5 +70,6 @@ class FamilyNotificationModel {
         timestamp: timestamp,
         read: read ?? this.read,
         readBy: readBy ?? this.readBy,
+        targetUserIds: targetUserIds,
       );
 }

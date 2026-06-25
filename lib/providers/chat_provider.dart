@@ -6,6 +6,7 @@ import '../models/transaction_model.dart';
 import '../models/user_model.dart';
 import '../models/family_notification_model.dart';
 import '../models/wallet_model.dart';
+import '../models/team_model.dart';
 import '../services/database_service.dart';
 import '../services/ai_service.dart';
 import '../utils/category_utils.dart';
@@ -76,6 +77,7 @@ class ChatProvider extends ChangeNotifier {
     UserModel user,
     String text, {
     WalletModel? wallet,
+    TeamModel? team,
   }) async {
     if (AIService.isNextReportCommand(text)) {
       final sent = await sendNextReportPage(groupId);
@@ -131,6 +133,7 @@ class ChatProvider extends ChangeNotifier {
         text,
         aiResults,
         wallet: wallet,
+        team: team,
       );
     }
 
@@ -168,6 +171,27 @@ class ChatProvider extends ChangeNotifier {
         await refreshMessages(groupId);
         return warning;
       }
+
+      if (isExpense && team != null) {
+        final warning = await _validateTeamLimit(groupId, team, amount);
+        if (warning != null) {
+          await _sendSystemMessage(groupId, warning);
+          await refreshMessages(groupId);
+          return warning;
+        }
+      }
+    }
+
+    if (aiResult != null && team != null && aiResult['isExpense'] == true) {
+      await _sendTeamParsedEntries(
+        groupId,
+        user,
+        text,
+        [aiResult],
+        wallet: wallet,
+        team: team,
+      );
+      return null;
     }
 
     final transactionId = aiResult != null ? _uuid.v4() : null;
@@ -330,7 +354,7 @@ class ChatProvider extends ChangeNotifier {
 
   Future<String?> _sendMultipleParsedEntries(String groupId, UserModel user,
       String originalText, List<Map<String, dynamic>> results,
-      {WalletModel? wallet}) async {
+      {WalletModel? wallet, TeamModel? team}) async {
     final hasExpense = results.any((r) => r['isExpense'] == true);
     if (hasExpense && !user.canAddExpenses) {
       final warning =
@@ -371,6 +395,23 @@ class ChatProvider extends ChangeNotifier {
       await _sendSystemMessage(groupId, warning);
       await refreshMessages(groupId);
       return warning;
+    }
+
+    if (team != null && hasExpense) {
+      final warning = await _validateTeamLimit(groupId, team, totalExpense);
+      if (warning != null) {
+        await _sendSystemMessage(groupId, warning);
+        await refreshMessages(groupId);
+        return warning;
+      }
+      return _sendTeamParsedEntries(
+        groupId,
+        user,
+        originalText,
+        results,
+        wallet: wallet,
+        team: team,
+      );
     }
 
     for (final result in results) {
@@ -430,6 +471,75 @@ class ChatProvider extends ChangeNotifier {
     );
 
     _messages = await _db.getMessagesSync(groupId);
+    notifyListeners();
+    return null;
+  }
+
+  Future<String?> _validateTeamLimit(
+    String groupId,
+    TeamModel team,
+    double newExpense,
+  ) async {
+    if (team.limit <= 0) return null;
+    final txns = await _db.getTeamTransactions(groupId, team.id);
+    final spent = _db.spentForTeamPeriod(txns, team);
+    if (spent + newExpense <= team.limit) return null;
+    final remaining = team.limit - spent;
+    return '⚠️ مصروف فريق ${team.name} يتجاوز الحد ${team.periodLabel}. المتبقي تقريبًا ${remaining.toStringAsFixed(0)} ج.';
+  }
+
+  Future<String?> _sendTeamParsedEntries(
+    String groupId,
+    UserModel user,
+    String originalText,
+    List<Map<String, dynamic>> results, {
+    required TeamModel team,
+    WalletModel? wallet,
+  }) async {
+    var savedCount = 0;
+    var total = 0.0;
+    for (final result in results.where((r) => r['isExpense'] == true)) {
+      final transactionId = _uuid.v4();
+      final amount = result['amount'] as double;
+      final transaction = TransactionModel(
+        id: transactionId,
+        groupId: groupId,
+        userId: user.id,
+        userName: user.name,
+        amount: amount,
+        category: result['category'] as String,
+        isExpense: true,
+        note: result['note'] as String? ?? originalText,
+        walletId: wallet?.id,
+        walletName: wallet?.name,
+        teamId: team.id,
+        teamName: team.name,
+      );
+      await _db.addTransaction(transaction);
+      if (wallet != null) {
+        await _db.applyWalletDelta(groupId, wallet.id, -amount);
+      }
+      savedCount++;
+      total += amount;
+    }
+
+    final recipients = <String>{
+      team.ownerId,
+      user.id,
+      ...team.memberIds,
+    }.where((id) => id.trim().isNotEmpty).toList();
+    await _db.addFamilyNotification(FamilyNotificationModel(
+      id: _uuid.v4(),
+      groupId: groupId,
+      title: 'مصروف فريق ${team.name}',
+      body:
+          '${user.name}: ${total.toStringAsFixed(0)} ج في $savedCount بند. اضغط على الفرق لمراجعة التفاصيل.',
+      actorId: user.id,
+      actorName: user.name,
+      timestamp: DateTime.now(),
+      targetUserIds: recipients,
+    ));
+
     notifyListeners();
     return null;
   }

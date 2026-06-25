@@ -9,6 +9,7 @@ import '../models/budget_model.dart';
 import '../models/group_model.dart';
 import '../models/family_notification_model.dart';
 import '../models/wallet_model.dart';
+import '../models/team_model.dart';
 import '../config/constants.dart';
 import '../services/auth_service.dart';
 import '../utils/category_utils.dart';
@@ -60,6 +61,8 @@ class DatabaseService {
       _families.doc(groupId).collection('notifications');
   CollectionReference<Map<String, dynamic>> _wallets(String groupId) =>
       _families.doc(groupId).collection('wallets');
+  CollectionReference<Map<String, dynamic>> _teams(String groupId) =>
+      _families.doc(groupId).collection('teams');
 
   String _newInviteCode() {
     return List.generate(
@@ -378,6 +381,125 @@ class DatabaseService {
     }).fold<double>(0.0, (sum, t) => sum + t.amount);
   }
 
+  // ─── Teams ───
+  Future<List<TeamModel>> getTeamsSync(String groupId) async {
+    final q = await _teams(groupId).orderBy('createdAt').get();
+    return q.docs.map((d) {
+      final data = d.data();
+      return TeamModel.fromMap({...data, 'id': data['id'] ?? d.id});
+    }).toList();
+  }
+
+  Future<List<TeamModel>> getVisibleTeams(
+    String groupId,
+    UserModel user,
+  ) async {
+    final teams = await getTeamsSync(groupId);
+    if (user.isAdmin || user.canManageMembers || user.canManageBudgets) {
+      return teams;
+    }
+    return teams
+        .where((team) => team.ownerId == user.id || team.hasMember(user.id))
+        .toList();
+  }
+
+  Future<TeamModel> addTeam(
+    String groupId, {
+    required String name,
+    required UserModel owner,
+    required double limit,
+    String period = 'monthly',
+    List<UserModel> members = const [],
+  }) async {
+    final clean = name.trim().isEmpty ? 'فريق جديد' : name.trim();
+    final id = '${DateTime.now().millisecondsSinceEpoch}_${_docSafeId(clean)}';
+    final selected = <String, UserModel>{
+      owner.id: owner,
+      for (final member in members) member.id: member,
+    };
+    final now = DateTime.now();
+    final team = TeamModel(
+      id: id,
+      groupId: groupId,
+      name: clean,
+      ownerId: owner.id,
+      ownerName: owner.name,
+      limit: limit,
+      period: _normalizeBudgetPeriod(period),
+      memberIds: selected.keys.toList(),
+      memberNames: selected.map((id, member) => MapEntry(id, member.name)),
+      createdAt: now,
+      updatedAt: now,
+    );
+    await _teams(groupId).doc(id).set(team.toMap(), SetOptions(merge: true));
+    return team;
+  }
+
+  Future<void> updateTeam(
+    String groupId,
+    TeamModel team, {
+    String? name,
+    double? limit,
+    String? period,
+    List<UserModel>? members,
+  }) async {
+    final selected = members == null
+        ? null
+        : <String, UserModel>{
+            for (final member in members) member.id: member,
+          };
+    await _teams(groupId).doc(team.id).set({
+      if (name != null) 'name': name.trim().isEmpty ? team.name : name.trim(),
+      if (limit != null) 'limit': limit,
+      if (period != null) 'period': _normalizeBudgetPeriod(period),
+      if (selected != null) 'memberIds': selected.keys.toList(),
+      if (selected != null)
+        'memberNames': selected.map((id, member) => MapEntry(id, member.name)),
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> removeTeamMember(
+      String groupId, TeamModel team, String userId) async {
+    final ids = team.memberIds.where((id) => id != userId).toList();
+    final names = Map<String, String>.from(team.memberNames)..remove(userId);
+    await _teams(groupId).doc(team.id).set({
+      'memberIds': ids,
+      'memberNames': names,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> deleteTeam(String groupId, String teamId) async {
+    final txns = await getTeamTransactions(groupId, teamId);
+    final batch = _fs.batch();
+    for (final txn in txns) {
+      batch.delete(_transactions(groupId).doc(txn.id));
+    }
+    batch.delete(_teams(groupId).doc(teamId));
+    await batch.commit();
+  }
+
+  Future<List<TransactionModel>> getTeamTransactions(
+    String groupId,
+    String teamId,
+  ) async {
+    final q = await _transactions(groupId)
+        .where('teamId', isEqualTo: teamId)
+        .orderBy('date', descending: true)
+        .limit(500)
+        .get();
+    return q.docs.map((d) => TransactionModel.fromMap(d.data())).toList();
+  }
+
+  double spentForTeamPeriod(List<TransactionModel> txns, TeamModel team) {
+    final start = _periodStart(team.period);
+    return txns.where((t) {
+      final txDay = DateTime(t.date.year, t.date.month, t.date.day);
+      return t.isExpense && !txDay.isBefore(start);
+    }).fold<double>(0.0, (sum, t) => sum + t.amount);
+  }
+
   // ─── Messages ───
   Future<List<ChatMessage>> getMessagesSync(String groupId) async {
     final q = await _messages(groupId)
@@ -421,12 +543,17 @@ class DatabaseService {
   }
 
   // ─── Transactions ───
-  Future<List<TransactionModel>> getTransactionsSync(String groupId) async {
+  Future<List<TransactionModel>> getTransactionsSync(
+    String groupId, {
+    bool includeTeamExpenses = false,
+  }) async {
     final q = await _transactions(groupId)
         .orderBy('date', descending: true)
         .limit(1000)
         .get();
-    return q.docs.map((d) => TransactionModel.fromMap(d.data())).toList();
+    final txns = q.docs.map((d) => TransactionModel.fromMap(d.data())).toList();
+    if (includeTeamExpenses) return txns;
+    return txns.where((t) => !t.isTeamExpense).toList();
   }
 
   Future<void> addTransaction(TransactionModel transaction) async {

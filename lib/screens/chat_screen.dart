@@ -16,8 +16,10 @@ import '../providers/budget_provider.dart';
 import '../providers/notification_provider.dart';
 import '../models/chat_message_model.dart';
 import '../models/wallet_model.dart';
+import '../models/team_model.dart';
 import '../services/voice_service.dart';
 import '../services/ai_service.dart';
+import '../services/database_service.dart';
 import '../services/local_notice_service.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
@@ -25,6 +27,7 @@ import 'members_screen.dart';
 import 'group_settings_screen.dart';
 import 'analytics_screen.dart';
 import 'notifications_screen.dart';
+import 'teams_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String groupId;
@@ -44,6 +47,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   final _textController = TextEditingController();
   final _voiceService = VoiceService();
+  final _db = DatabaseService();
   final _localNotice = const LocalNoticeService();
   final _appLinks = AppLinks();
   bool _isRecording = false;
@@ -233,6 +237,14 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
     }
+    final selectedTeam = totalExpense > 0 ? await _pickTeamForExpense() : null;
+    if (totalExpense > 0 && selectedTeam == _teamSelectionCancelled) {
+      _putTextInInput(text);
+      _lastSubmittedText = null;
+      _lastSubmittedAt = null;
+      if (mounted) setState(() => _isSending = false);
+      return;
+    }
     final selectedWallet =
         totalExpense > 0 ? await _pickWalletForExpense(totalExpense) : null;
     if (totalExpense > 0 && selectedWallet == _walletSelectionCancelled) {
@@ -261,6 +273,7 @@ class _ChatScreenState extends State<ChatScreen> {
         auth.user!,
         text,
         wallet: selectedWallet,
+        team: selectedTeam,
       );
       await chat.refreshMessages(widget.groupId);
       await context.read<BudgetProvider>().refreshData(widget.groupId);
@@ -290,6 +303,58 @@ class _ChatScreenState extends State<ChatScreen> {
     name: '__cancelled__',
     balance: 0,
   );
+
+  static final TeamModel _teamSelectionCancelled = TeamModel(
+    id: '__cancelled__',
+    groupId: '__cancelled__',
+    name: '__cancelled__',
+    ownerId: '__cancelled__',
+    ownerName: '__cancelled__',
+  );
+
+  Future<TeamModel?> _pickTeamForExpense() async {
+    final auth = context.read<AuthProvider>();
+    final user = auth.user;
+    if (user == null) return null;
+    final teams = await _db.getVisibleTeams(widget.groupId, user);
+    if (teams.isEmpty) return null;
+    if (!mounted) return _teamSelectionCancelled;
+    final selected = await showDialog<TeamModel?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تسجيل المصروف فين؟'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.home_rounded),
+              title: const Text('مصروف عائلي عام'),
+              subtitle: const Text('يظهر في شات وتقارير العائلة'),
+              onTap: () => Navigator.pop(ctx, null),
+            ),
+            const Divider(height: 1),
+            ...teams.map(
+              (team) => ListTile(
+                leading: const Icon(Icons.groups_2_rounded),
+                title: Text(team.name),
+                subtitle: Text(team.limit > 0
+                    ? 'حد ${team.periodLabel}: ${team.limit.toStringAsFixed(0)} ج'
+                    : 'بدون حد'),
+                onTap: () => Navigator.pop(ctx, team),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, _teamSelectionCancelled),
+            child: const Text('إلغاء'),
+          ),
+        ],
+      ),
+    );
+    return selected;
+  }
 
   Future<WalletModel?> _pickWalletForExpense(double amount) async {
     final budget = context.read<BudgetProvider>();
@@ -863,6 +928,15 @@ class _ChatScreenState extends State<ChatScreen> {
               context,
               MaterialPageRoute(
                   builder: (_) => MembersScreen(groupId: widget.groupId)),
+            ),
+          ),
+          IconButton(
+            tooltip: 'الفرق',
+            icon: const Icon(Icons.groups_2_rounded),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => TeamsScreen(groupId: widget.groupId)),
             ),
           ),
           if (user?.isAdmin == true)

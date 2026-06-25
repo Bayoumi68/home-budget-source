@@ -10,14 +10,18 @@ class NotificationProvider extends ChangeNotifier {
   String? _currentUserId;
 
   List<FamilyNotificationModel> get items => _items;
+  List<FamilyNotificationModel> get visibleItems => _currentUserId == null
+      ? _items
+      : _items.where((n) => n.isVisibleFor(_currentUserId!)).toList();
   int get unreadCount => _items
-      .where((n) =>
-          _currentUserId == null ? !n.read : !n.isReadFor(_currentUserId!))
+      .where((n) => _currentUserId == null
+          ? !n.read
+          : n.isVisibleFor(_currentUserId!) && !n.isReadFor(_currentUserId!))
       .length;
 
   FamilyNotificationModel? latestUnreadFromOther(String? userId) {
     if (userId == null) return null;
-    for (final item in _items) {
+    for (final item in visibleItems) {
       if (item.actorId != userId && !item.isReadFor(userId)) return item;
     }
     return null;

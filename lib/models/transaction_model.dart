@@ -11,6 +11,8 @@ class TransactionModel {
   final String? receiptUrl;
   final String? walletId;
   final String? walletName;
+  final String? teamId;
+  final String? teamName;
 
   TransactionModel({
     required this.id,
@@ -25,7 +27,11 @@ class TransactionModel {
     this.receiptUrl,
     this.walletId,
     this.walletName,
+    this.teamId,
+    this.teamName,
   }) : date = date ?? DateTime.now();
+
+  bool get isTeamExpense => teamId != null && teamId!.isNotEmpty;
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -40,6 +46,8 @@ class TransactionModel {
         'receiptUrl': receiptUrl,
         'walletId': walletId,
         'walletName': walletName,
+        'teamId': teamId,
+        'teamName': teamName,
       };
 
   factory TransactionModel.fromMap(Map<String, dynamic> map) =>
@@ -56,5 +64,7 @@ class TransactionModel {
         receiptUrl: map['receiptUrl'],
         walletId: map['walletId'],
         walletName: map['walletName'],
+        teamId: map['teamId'],
+        teamName: map['teamName'],
       );
 }
