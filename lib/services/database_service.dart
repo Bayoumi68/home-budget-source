@@ -13,6 +13,13 @@ import '../config/constants.dart';
 import '../services/auth_service.dart';
 import '../utils/category_utils.dart';
 
+class FamilyMembership {
+  final GroupModel group;
+  final UserModel member;
+
+  const FamilyMembership({required this.group, required this.member});
+}
+
 /// V4 Firebase-backed storage.
 ///
 /// Local SharedPreferences are used only for the active device session.
@@ -195,6 +202,32 @@ class DatabaseService {
     final doc = await _families.doc(groupId).get();
     if (!doc.exists || doc.data() == null) return null;
     return GroupModel.fromMap(doc.data()!);
+  }
+
+  Future<List<FamilyMembership>> findMembershipsByPhone(String phone) async {
+    final candidates = _phoneLookupCandidates(phone);
+    if (candidates.isEmpty) return const [];
+    final byGroup = <String, FamilyMembership>{};
+    for (final candidate in candidates) {
+      final q = await _fs
+          .collectionGroup('members')
+          .where('phone', isEqualTo: candidate)
+          .limit(8)
+          .get();
+      for (final doc in q.docs) {
+        final groupRef = doc.reference.parent.parent;
+        if (groupRef == null || byGroup.containsKey(groupRef.id)) continue;
+        final group = await getGroupById(groupRef.id);
+        if (group == null) continue;
+        byGroup[group.id] = FamilyMembership(
+          group: group,
+          member: UserModel.fromMap(doc.data()),
+        );
+      }
+    }
+    final items = byGroup.values.toList()
+      ..sort((a, b) => a.group.name.compareTo(b.group.name));
+    return items;
   }
 
   Future<void> joinGroup(String groupId, UserModel user) async {
@@ -567,21 +600,30 @@ class DatabaseService {
     final existing = q.docs.map((d) => BudgetModel.fromMap(d.data())).toList();
     existing.sort((a, b) => a.category.compareTo(b.category));
     return existing
-        .map((b) => b.copyWith(spent: _spentForCategory(txns, b.category)))
+        .map((b) => b.copyWith(
+              spent: _spentForCategory(txns, b.category, period: b.period),
+            ))
         .toList();
   }
 
-  Future<void> setBudget(String groupId, String category, double limit) async {
+  Future<void> setBudget(
+    String groupId,
+    String category,
+    double limit, {
+    String period = 'monthly',
+  }) async {
     final clean = category.trim();
     if (clean.isEmpty) return;
     await _ensureCategoryStored(groupId, clean);
     final txns = await getTransactionsSync(groupId);
-    final spent = _spentForCategory(txns, clean);
+    final normalizedPeriod = _normalizeBudgetPeriod(period);
+    final spent = _spentForCategory(txns, clean, period: normalizedPeriod);
     await _budgets(groupId).doc(_docSafeId(clean)).set({
       'category': clean,
       'limit': limit,
       'spent': spent,
-      'monthKey': _monthKey(),
+      'period': normalizedPeriod,
+      'periodKey': _periodKey(normalizedPeriod),
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
   }
@@ -641,13 +683,39 @@ class DatabaseService {
   }
 
   // ─── Accounting Engine ───
-  String _monthKey([DateTime? date]) {
-    final d = date ?? DateTime.now();
-    return '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}';
+  String _normalizeBudgetPeriod(String period) {
+    if (period == 'daily' || period == 'weekly' || period == 'monthly') {
+      return period;
+    }
+    return 'monthly';
   }
 
-  bool _transactionMatchesBudget(TransactionModel t, String category) {
-    if (!t.isExpense || !CategoryUtils.isThisMonth(t.date)) return false;
+  DateTime _periodStart(String period, [DateTime? now]) {
+    final d = now ?? DateTime.now();
+    final today = DateTime(d.year, d.month, d.day);
+    switch (_normalizeBudgetPeriod(period)) {
+      case 'daily':
+        return today;
+      case 'weekly':
+        return today.subtract(Duration(days: today.weekday - 1));
+      default:
+        return DateTime(d.year, d.month);
+    }
+  }
+
+  String _periodKey(String period, [DateTime? now]) {
+    final start = _periodStart(period, now);
+    return '${_normalizeBudgetPeriod(period)}-${start.year.toString().padLeft(4, '0')}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}';
+  }
+
+  bool _transactionMatchesBudget(
+    TransactionModel t,
+    String category, {
+    String period = 'monthly',
+  }) {
+    if (!t.isExpense) return false;
+    final txDay = DateTime(t.date.year, t.date.month, t.date.day);
+    if (txDay.isBefore(_periodStart(period))) return false;
     final budgetKey = _categoryKey(category);
     if (budgetKey.isEmpty || budgetKey == _categoryKey('أخرى')) return false;
 
@@ -692,9 +760,13 @@ class DatabaseService {
     return t.category.isEmpty ? 'أخرى' : t.category;
   }
 
-  double _spentForCategory(List<TransactionModel> txns, String category) {
+  double _spentForCategory(
+    List<TransactionModel> txns,
+    String category, {
+    String period = 'monthly',
+  }) {
     return txns
-        .where((t) => _transactionMatchesBudget(t, category))
+        .where((t) => _transactionMatchesBudget(t, category, period: period))
         .fold<double>(0.0, (sum, t) => sum + t.amount);
   }
 
@@ -706,13 +778,16 @@ class DatabaseService {
     for (final doc in q.docs) {
       final data = doc.data();
       final category = (data['category'] ?? '').toString();
-      final spent = _spentForCategory(txns, category);
+      final period =
+          _normalizeBudgetPeriod((data['period'] ?? 'monthly').toString());
+      final spent = _spentForCategory(txns, category, period: period);
       batch.set(
           doc.reference,
           {
             ...data,
             'spent': spent,
-            'monthKey': _monthKey(),
+            'period': period,
+            'periodKey': _periodKey(period),
             'updatedAt': DateTime.now().toIso8601String(),
           },
           SetOptions(merge: true));
@@ -802,7 +877,7 @@ class DatabaseService {
               ? 'متبقي ${remaining.toStringAsFixed(0)} ج'
               : 'تجاوز ${(-remaining).toStringAsFixed(0)} ج';
           lines.add(
-              '• ${b.category}: حد ${b.limit.toStringAsFixed(0)} ج — صرف ${b.spent.toStringAsFixed(0)} ج — $status');
+              '• ${b.category}: حد ${b.periodLabel} ${b.limit.toStringAsFixed(0)} ج — صرف ${b.spent.toStringAsFixed(0)} ج — $status');
         }
       }
     }

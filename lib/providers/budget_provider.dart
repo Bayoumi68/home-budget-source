@@ -85,11 +85,16 @@ class BudgetProvider extends ChangeNotifier {
     return t.category.isEmpty ? 'أخرى' : t.category;
   }
 
-  Future<void> setBudget(String groupId, String category, double limit) async {
+  Future<void> setBudget(
+    String groupId,
+    String category,
+    double limit, {
+    String period = 'monthly',
+  }) async {
     _loading = true;
     notifyListeners();
     try {
-      await _db.setBudget(groupId, category, limit);
+      await _db.setBudget(groupId, category, limit, period: period);
       _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
       _budgets = await _db.getBudgetsSync(groupId);
       _wallets = await _db.getWalletsSync(groupId);

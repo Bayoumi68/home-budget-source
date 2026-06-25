@@ -154,11 +154,26 @@ class _AuthScreenState extends State<AuthScreen> {
         ? 'عائلتي'
         : _groupNameController.text.trim();
 
+    final auth = context.read<AuthProvider>();
     setState(() => _busy = true);
     try {
+      final existing = await _db.findMembershipsByPhone(phone);
+      if (existing.isNotEmpty && mounted) {
+        final selected = await _chooseExistingMembership(
+          existing,
+          title: 'رقمك موجود بالفعل',
+          message:
+              'وجدت عائلة مسجلة بهذا الرقم. افتح العائلة القديمة بدل إنشاء عائلة جديدة حتى لا تبدأ الحسابات من الصفر.',
+          allowCreateNew: true,
+        );
+        if (selected == null) return;
+        if (selected.membership != null) {
+          await _openMembership(selected.membership!);
+          return;
+        }
+      }
       final verified = await _verifyPhoneWithDemoWhatsApp(phone);
       if (!verified) return;
-      final auth = context.read<AuthProvider>();
       await auth.ensureFirebaseIdentity();
       final user = auth.createUser(name, phone: phone, isAdmin: true);
       final group = await _db.createGroup(
@@ -186,11 +201,11 @@ class _AuthScreenState extends State<AuthScreen> {
     final code = _inviteController.text.trim().toUpperCase();
     final inviteGroupId = (_inviteGroupId ?? '').trim();
 
+    final auth = context.read<AuthProvider>();
     setState(() => _busy = true);
     try {
       final verified = await _verifyPhoneWithDemoWhatsApp(phone);
       if (!verified) return;
-      final auth = context.read<AuthProvider>();
       final uid = await auth.ensureFirebaseIdentity();
 
       var group =
@@ -233,13 +248,27 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!_validateBasic(requireName: false) || _busy) return;
     final familyName = _groupNameController.text.trim();
     final phone = _authService.normalizePhone(_phoneController.text.trim());
-    if (familyName.isEmpty) {
-      _snack('اكتب اسم العائلة');
-      return;
-    }
 
+    final auth = context.read<AuthProvider>();
     setState(() => _busy = true);
     try {
+      if (familyName.isEmpty) {
+        final memberships = await _db.findMembershipsByPhone(phone);
+        if (memberships.isEmpty) {
+          _snack('لم أجد عائلة مرتبطة بهذا الرقم. راجع قائد العائلة.');
+          return;
+        }
+        final selected = memberships.length == 1
+            ? _MembershipChoice.open(memberships.first)
+            : await _chooseExistingMembership(
+                memberships,
+                title: 'اختر العائلة',
+                message: 'وجدت أكثر من عائلة مرتبطة بهذا الرقم.',
+              );
+        if (selected?.membership == null) return;
+        await _openMembership(selected!.membership!);
+        return;
+      }
       final group = await _db.getGroupByName(familyName);
       if (group == null) {
         _snack('لم أجد عائلة بهذا الاسم. راجع قائد العائلة.');
@@ -250,7 +279,6 @@ class _AuthScreenState extends State<AuthScreen> {
         _snack('رقمك غير موجود في هذه العائلة. راجع قائد العائلة.');
         return;
       }
-      final auth = context.read<AuthProvider>();
       final uid = await auth.ensureFirebaseIdentity();
       final linkedMember = uid == null
           ? member
@@ -265,6 +293,72 @@ class _AuthScreenState extends State<AuthScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _openMembership(FamilyMembership membership) async {
+    final auth = context.read<AuthProvider>();
+    final uid = await auth.ensureFirebaseIdentity();
+    final member = uid == null
+        ? membership.member
+        : await _db.bindMemberAuthUid(
+            membership.group.id,
+            membership.member,
+            uid,
+          );
+    await auth.setSession(member, membership.group);
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, '/chat', arguments: {
+        'groupId': membership.group.id,
+        'groupName': membership.group.name,
+      });
+    }
+  }
+
+  Future<_MembershipChoice?> _chooseExistingMembership(
+    List<FamilyMembership> memberships, {
+    required String title,
+    required String message,
+    bool allowCreateNew = false,
+  }) {
+    return showDialog<_MembershipChoice?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(message),
+              const SizedBox(height: 12),
+              ...memberships.map(
+                (item) => Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.home_rounded),
+                    title: Text(item.group.name),
+                    subtitle: Text('الدخول باسم: ${item.member.name}'),
+                    onTap: () =>
+                        Navigator.pop(ctx, _MembershipChoice.open(item)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('إلغاء'),
+          ),
+          if (allowCreateNew)
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, const _MembershipChoice.createNew()),
+              child: const Text('إنشاء عائلة جديدة رغم ذلك'),
+            ),
+        ],
+      ),
+    );
   }
 
   void _snack(String text) {
@@ -356,7 +450,8 @@ class _AuthScreenState extends State<AuthScreen> {
                       _inviteController, 'كود الدعوة عند الانضمام لعائلة'),
                 ] else ...[
                   const SizedBox(height: 12),
-                  _whiteField(_groupNameController, 'اسم العائلة الموجودة'),
+                  _whiteField(_groupNameController,
+                      'اسم العائلة الموجودة أو اتركه فارغًا للبحث برقمك'),
                 ],
                 const SizedBox(height: 24),
                 if (!inviteMode && _mode == 0) ...[
@@ -497,4 +592,14 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
     );
   }
+}
+
+class _MembershipChoice {
+  final FamilyMembership? membership;
+  final bool createNew;
+
+  const _MembershipChoice.open(this.membership) : createNew = false;
+  const _MembershipChoice.createNew()
+      : membership = null,
+        createNew = true;
 }

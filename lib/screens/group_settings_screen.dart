@@ -47,35 +47,64 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           ? ''
           : current.limit.toStringAsFixed(0),
     );
-    final amount = await showDialog<double>(
+    var period = current?.period ?? 'monthly';
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('حد الميزانية — $category'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          textDirection: ui.TextDirection.ltr,
-          decoration: const InputDecoration(
-            hintText: 'المبلغ بالجنيه',
-            border: OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('حد الميزانية — $category'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                textDirection: ui.TextDirection.ltr,
+                decoration: const InputDecoration(
+                  hintText: 'المبلغ بالجنيه',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'daily', label: Text('يومي')),
+                  ButtonSegment(value: 'weekly', label: Text('أسبوعي')),
+                  ButtonSegment(value: 'monthly', label: Text('شهري')),
+                ],
+                selected: {period},
+                onSelectionChanged: (values) {
+                  setDialogState(() => period = values.first);
+                },
+              ),
+            ],
           ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, {
+                'amount': double.tryParse(controller.text.trim()),
+                'period': period,
+              }),
+              child: const Text('حفظ'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(ctx, double.tryParse(controller.text.trim())),
-            child: const Text('حفظ'),
-          ),
-        ],
       ),
     );
+    controller.dispose();
+    final amount = result?['amount'] as double?;
+    final selectedPeriod = (result?['period'] as String?) ?? 'monthly';
     if (amount != null && amount >= 0) {
       if (mounted) {
-        await context
-            .read<BudgetProvider>()
-            .setBudget(widget.groupId, category, amount);
+        await context.read<BudgetProvider>().setBudget(
+              widget.groupId,
+              category,
+              amount,
+              period: selectedPeriod,
+            );
       }
     }
   }
@@ -510,7 +539,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           Row(
             children: [
               const Expanded(
-                child: Text('أنواع وحدود المصروفات — الشهر الحالي',
+                child: Text('أنواع وحدود المصروفات',
                     style:
                         TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               ),
@@ -537,6 +566,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             final spent =
                 current?.spent ?? _categorySpent(budget.categoryTotals, cat);
             final limit = current?.limit ?? 0;
+            final periodLabel = current?.periodLabel ?? 'شهري';
             final remaining = limit - spent;
             final percent =
                 limit > 0 ? (spent / limit).clamp(0.0, 1.0).toDouble() : 0.0;
@@ -553,7 +583,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                              'الحد ${limit.toStringAsFixed(0)} ج — المصروف هذا الشهر ${spent.toStringAsFixed(0)} ج'),
+                              'حد $periodLabel ${limit.toStringAsFixed(0)} ج — المصروف في نفس الفترة ${spent.toStringAsFixed(0)} ج'),
                           Text(
                             remainingText,
                             style: TextStyle(
@@ -573,7 +603,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                         ],
                       )
                     : Text(
-                        'لا يوجد حد محدد — المصروف هذا الشهر ${spent.toStringAsFixed(0)} ج'),
+                        'لا يوجد حد محدد — مصروف الشهر ${spent.toStringAsFixed(0)} ج'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -626,9 +656,9 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          Center(
+          const Center(
             child: Text('Budget Home v${AppConstants.appVersion}',
-                style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
           ),
         ],
       ),
