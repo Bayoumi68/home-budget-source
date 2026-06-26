@@ -63,6 +63,17 @@ class _SplashScreenState extends State<SplashScreen> {
     }
 
     if (auth.isLoggedIn && auth.group != null) {
+      if (auth.isTeamOnly && (auth.teamId ?? '').isNotEmpty) {
+        Navigator.pushReplacementNamed(
+          context,
+          '/team-home',
+          arguments: {
+            'groupId': auth.group!.id,
+            'teamId': auth.teamId,
+          },
+        );
+        return;
+      }
       Navigator.pushReplacementNamed(
         context,
         '/chat',

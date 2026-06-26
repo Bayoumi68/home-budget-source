@@ -7,6 +7,7 @@ class TeamModel {
   final double balance;
   final List<String> memberIds;
   final Map<String, String> memberNames;
+  final Map<String, String> memberPhones;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -19,6 +20,7 @@ class TeamModel {
     this.balance = 0,
     this.memberIds = const [],
     this.memberNames = const {},
+    this.memberPhones = const {},
     DateTime? createdAt,
     DateTime? updatedAt,
   })  : createdAt = createdAt ?? DateTime.now(),
@@ -37,6 +39,7 @@ class TeamModel {
         'balance': balance,
         'memberIds': memberIds,
         'memberNames': memberNames,
+        'memberPhones': memberPhones,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
       };
@@ -56,6 +59,9 @@ class TeamModel {
         memberNames: (map['memberNames'] as Map?)?.map(
                 (key, value) => MapEntry(key.toString(), value.toString())) ??
             const {},
+        memberPhones: (map['memberPhones'] as Map?)?.map(
+                (key, value) => MapEntry(key.toString(), value.toString())) ??
+            const {},
         createdAt: DateTime.tryParse((map['createdAt'] ?? '').toString()) ??
             DateTime.now(),
         updatedAt: DateTime.tryParse((map['updatedAt'] ?? '').toString()) ??
@@ -71,6 +77,7 @@ class TeamModel {
     double? balance,
     List<String>? memberIds,
     Map<String, String>? memberNames,
+    Map<String, String>? memberPhones,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) =>
@@ -83,6 +90,7 @@ class TeamModel {
         balance: balance ?? this.balance,
         memberIds: memberIds ?? this.memberIds,
         memberNames: memberNames ?? this.memberNames,
+        memberPhones: memberPhones ?? this.memberPhones,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );

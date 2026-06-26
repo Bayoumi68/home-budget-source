@@ -14,6 +14,7 @@ import 'providers/theme_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/chat_screen.dart';
+import 'screens/team_member_home_screen.dart';
 
 Future<void> main() async {
   runZonedGuarded(() async {
@@ -129,6 +130,14 @@ class BudgetHomeApp extends StatelessWidget {
                     builder: (_) => ChatScreen(
                       groupId: args?['groupId'] ?? '',
                       groupName: args?['groupName'] ?? 'عائلتي',
+                    ),
+                  );
+                case '/team-home':
+                  final args = settings.arguments as Map<String, dynamic>?;
+                  return MaterialPageRoute(
+                    builder: (_) => TeamMemberHomeScreen(
+                      groupId: args?['groupId'] ?? '',
+                      teamId: args?['teamId'] ?? '',
                     ),
                   );
                 default:

@@ -21,6 +21,18 @@ class FamilyMembership {
   const FamilyMembership({required this.group, required this.member});
 }
 
+class TeamMembership {
+  final GroupModel group;
+  final TeamModel team;
+  final UserModel member;
+
+  const TeamMembership({
+    required this.group,
+    required this.team,
+    required this.member,
+  });
+}
+
 /// V4 Firebase-backed storage.
 ///
 /// Local SharedPreferences are used only for the active device session.
@@ -35,6 +47,8 @@ class FamilyMembership {
 class DatabaseService {
   static const _activeUserKey = 'active_user';
   static const _activeGroupKey = 'active_group';
+  static const _activeTeamKey = 'active_team';
+  static const _activeSessionModeKey = 'active_session_mode';
   static const _sessionVersionKey = 'active_app_version';
   static final _secureRandom = Random.secure();
   final _authService = AuthService();
@@ -80,10 +94,22 @@ class DatabaseService {
   }
 
   // ─── Session ───
-  Future<void> saveActiveSession(UserModel user, GroupModel group) async {
+  Future<void> saveActiveSession(
+    UserModel user,
+    GroupModel group, {
+    String? teamId,
+    bool teamOnly = false,
+  }) async {
     await _ensurePrefs();
     await _prefs?.setString(_activeUserKey, _encode(user.toMap()));
     await _prefs?.setString(_activeGroupKey, _encode(group.toMap()));
+    if (teamId != null && teamId.trim().isNotEmpty) {
+      await _prefs?.setString(_activeTeamKey, teamId.trim());
+    } else {
+      await _prefs?.remove(_activeTeamKey);
+    }
+    await _prefs?.setString(
+        _activeSessionModeKey, teamOnly ? 'team' : 'family');
     await _prefs?.setString(_sessionVersionKey, AppConstants.appVersion);
   }
 
@@ -107,10 +133,23 @@ class DatabaseService {
     return GroupModel.fromMap(_decode(data));
   }
 
+  Future<String?> getActiveTeamId() async {
+    await _ensurePrefs();
+    final teamId = _prefs?.getString(_activeTeamKey)?.trim();
+    return teamId == null || teamId.isEmpty ? null : teamId;
+  }
+
+  Future<bool> isActiveTeamOnlySession() async {
+    await _ensurePrefs();
+    return _prefs?.getString(_activeSessionModeKey) == 'team';
+  }
+
   Future<void> clearActiveSession() async {
     await _ensurePrefs();
     await _prefs?.remove(_activeUserKey);
     await _prefs?.remove(_activeGroupKey);
+    await _prefs?.remove(_activeTeamKey);
+    await _prefs?.remove(_activeSessionModeKey);
     await _prefs?.remove(_sessionVersionKey);
   }
 
@@ -229,6 +268,42 @@ class DatabaseService {
     }
     final items = byGroup.values.toList()
       ..sort((a, b) => a.group.name.compareTo(b.group.name));
+    return items;
+  }
+
+  Future<List<TeamMembership>> findTeamMembershipsByPhone(String phone) async {
+    final candidates = _phoneLookupCandidates(phone);
+    if (candidates.isEmpty) return const [];
+    final ids = candidates.map((p) => 'phone_$p').toSet();
+    final byKey = <String, TeamMembership>{};
+    for (final id in ids) {
+      final q = await _fs
+          .collectionGroup('teams')
+          .where('memberIds', arrayContains: id)
+          .limit(12)
+          .get();
+      for (final doc in q.docs) {
+        final groupRef = doc.reference.parent.parent;
+        if (groupRef == null) continue;
+        final key = '${groupRef.id}/${doc.id}';
+        if (byKey.containsKey(key)) continue;
+        final group = await getGroupById(groupRef.id);
+        if (group == null) continue;
+        final team = TeamModel.fromMap({...doc.data(), 'id': doc.id});
+        final member = UserModel(
+          id: id,
+          name: team.memberNames[id] ?? 'عضو فريق',
+          phone: team.memberPhones[id],
+          canAddExpenses: true,
+          canViewReports: false,
+          canManageMembers: false,
+          canManageBudgets: false,
+        );
+        byKey[key] = TeamMembership(group: group, team: team, member: member);
+      }
+    }
+    final items = byKey.values.toList()
+      ..sort((a, b) => a.team.name.compareTo(b.team.name));
     return items;
   }
 
@@ -433,6 +508,10 @@ class DatabaseService {
       balance: balance,
       memberIds: selected.keys.toList(),
       memberNames: selected.map((id, member) => MapEntry(id, member.name)),
+      memberPhones: selected.map((id, member) => MapEntry(
+            id,
+            member.phone ?? '',
+          )),
       createdAt: now,
       updatedAt: now,
     );
@@ -452,12 +531,32 @@ class DatabaseService {
         : <String, UserModel>{
             for (final member in members) member.id: member,
           };
+    final externalIds = selected == null
+        ? const <String>[]
+        : team.memberIds
+            .where((id) => !selected.containsKey(id) && id != team.ownerId)
+            .toList();
+    final mergedNames = selected == null
+        ? null
+        : <String, String>{
+            for (final entry in selected.entries) entry.key: entry.value.name,
+            for (final id in externalIds)
+              id: team.memberNames[id] ?? 'عضو فريق',
+          };
+    final mergedPhones = selected == null
+        ? null
+        : <String, String>{
+            for (final entry in selected.entries)
+              entry.key: entry.value.phone ?? '',
+            for (final id in externalIds) id: team.memberPhones[id] ?? '',
+          };
     await _teams(groupId).doc(team.id).set({
       if (name != null) 'name': name.trim().isEmpty ? team.name : name.trim(),
       if (balance != null) 'balance': balance,
-      if (selected != null) 'memberIds': selected.keys.toList(),
       if (selected != null)
-        'memberNames': selected.map((id, member) => MapEntry(id, member.name)),
+        'memberIds': {...selected.keys, ...externalIds}.toList(),
+      if (mergedNames != null) 'memberNames': mergedNames,
+      if (mergedPhones != null) 'memberPhones': mergedPhones,
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
   }
@@ -466,9 +565,11 @@ class DatabaseService {
       String groupId, TeamModel team, String userId) async {
     final ids = team.memberIds.where((id) => id != userId).toList();
     final names = Map<String, String>.from(team.memberNames)..remove(userId);
+    final phones = Map<String, String>.from(team.memberPhones)..remove(userId);
     await _teams(groupId).doc(team.id).set({
       'memberIds': ids,
       'memberNames': names,
+      'memberPhones': phones,
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
   }
@@ -480,9 +581,14 @@ class DatabaseService {
     final ids = <String>{...team.memberIds, member.id}.toList();
     final names = Map<String, String>.from(team.memberNames)
       ..[member.id] = member.name;
+    final phones = Map<String, String>.from(team.memberPhones);
+    if ((member.phone ?? '').trim().isNotEmpty) {
+      phones[member.id] = member.phone!.trim();
+    }
     await _teams(groupId).doc(teamId).set({
       'memberIds': ids,
       'memberNames': names,
+      'memberPhones': phones,
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
   }

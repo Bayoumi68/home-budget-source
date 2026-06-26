@@ -65,6 +65,39 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<String?> sendTeamExpenseText(
+    String groupId,
+    UserModel user,
+    String text,
+    TeamModel team,
+  ) async {
+    final results = AIService.parseExpenseMessages(text)
+        .where((item) => item['isExpense'] == true)
+        .toList();
+    if (results.isEmpty) {
+      return 'اكتب مصروف واضح للفريق مثل: دفعت 100 بنزين';
+    }
+    final totalExpense = results.fold<double>(
+        0, (sum, item) => sum + (item['amount'] as double));
+    final warning = _validateTeamBalance(team, totalExpense);
+    if (warning != null) return warning;
+    try {
+      final categories = await _db.getExpenseCategoriesSync(groupId);
+      final budgets = await _db.getBudgetsSync(groupId);
+      final members = await _db.getMembersSync(groupId);
+      for (final result in results) {
+        _applyStoredMatches(
+          result,
+          (result['note'] as String?) ?? text,
+          categories,
+          budgets,
+          members,
+        );
+      }
+    } catch (_) {}
+    return _sendTeamParsedEntries(groupId, user, text, results, team: team);
+  }
+
   @override
   void dispose() {
     stopLiveMessages();

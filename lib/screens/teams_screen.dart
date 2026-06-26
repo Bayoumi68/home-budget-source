@@ -238,23 +238,25 @@ class _TeamsScreenState extends State<TeamsScreen> {
   }
 
   Widget _buildMembersSection(TeamModel team, bool canManage) {
-    final members =
-        team.memberIds.map(_memberById).whereType<UserModel>().toList();
     return Align(
       alignment: Alignment.centerRight,
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
         children: [
-          for (final member in members)
+          for (final memberId in team.memberIds)
             Chip(
               avatar: const Icon(Icons.person_rounded, size: 18),
-              label: Text(member.name),
-              deleteIcon: canManage && member.id != team.ownerId
+              label: Text(_teamMemberName(team, memberId)),
+              deleteIcon: canManage && memberId != team.ownerId
                   ? const Icon(Icons.close_rounded, size: 18)
                   : null,
-              onDeleted: canManage && member.id != team.ownerId
-                  ? () => _removeMemberFromTeam(team, member)
+              onDeleted: canManage && memberId != team.ownerId
+                  ? () => _removeMemberFromTeam(
+                        team,
+                        memberId,
+                        _teamMemberName(team, memberId),
+                      )
                   : null,
             ),
         ],
@@ -267,6 +269,10 @@ class _TeamsScreenState extends State<TeamsScreen> {
       if (member.id == id) return member;
     }
     return null;
+  }
+
+  String _teamMemberName(TeamModel team, String id) {
+    return _memberById(id)?.name ?? team.memberNames[id] ?? 'عضو فريق';
   }
 
   Widget _buildTransactionsSection(
@@ -415,13 +421,14 @@ class _TeamsScreenState extends State<TeamsScreen> {
     await _load();
   }
 
-  Future<void> _removeMemberFromTeam(TeamModel team, UserModel member) async {
+  Future<void> _removeMemberFromTeam(
+      TeamModel team, String memberId, String memberName) async {
     final ok = await _confirm(
       'إزالة عضو',
-      'هل تريد إزالة ${member.name} من فريق ${team.name}؟',
+      'هل تريد إزالة $memberName من فريق ${team.name}؟',
     );
     if (ok != true) return;
-    await _db.removeTeamMember(widget.groupId, team, member.id);
+    await _db.removeTeamMember(widget.groupId, team, memberId);
     await _load();
   }
 

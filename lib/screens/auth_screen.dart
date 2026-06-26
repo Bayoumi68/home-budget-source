@@ -224,6 +224,57 @@ class _AuthScreenState extends State<AuthScreen> {
         return;
       }
 
+      final teamId = (_inviteTeamId ?? '').trim();
+      if (teamId.isNotEmpty) {
+        final team = await _db.getTeamById(group.id, teamId);
+        if (team == null) {
+          _snack('دعوة الفريق غير صحيحة أو تم حذف الفريق.');
+          return;
+        }
+        final preparedMember = await _db.getMemberByPhone(group.id, phone);
+        final name = preparedMember?.name ?? _nameController.text.trim();
+        if (name.isEmpty) {
+          _snack('اكتب اسمك أولًا حتى يتم فتح حساب الفريق.');
+          return;
+        }
+        final teamUser = preparedMember ??
+            auth
+                .createUser(
+                  name,
+                  phone: phone,
+                )
+                .copyWith(
+                  canViewReports: false,
+                  canManageMembers: false,
+                  canManageBudgets: false,
+                );
+        await _db.addTeamMember(group.id, team.id, teamUser);
+        if (preparedMember != null &&
+            !preparedMember.isAdmin &&
+            !preparedMember.canManageMembers) {
+          await _db.removeMember(group.id, preparedMember.id);
+        }
+        final freshTeam = await _db.getTeamById(group.id, team.id) ?? team;
+        await auth.setSession(
+          teamUser,
+          group,
+          team: freshTeam,
+          teamOnly: true,
+        );
+        if (mounted && auto) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('تم فتح فريق ${freshTeam.name}')),
+          );
+        }
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/team-home', arguments: {
+            'groupId': group.id,
+            'teamId': freshTeam.id,
+          });
+        }
+        return;
+      }
+
       final preparedMember = await _db.getMemberByPhone(group.id, phone);
       UserModel joinedUser;
       if (preparedMember == null) {
@@ -239,9 +290,6 @@ class _AuthScreenState extends State<AuthScreen> {
         joinedUser = uid == null
             ? preparedMember
             : await _db.bindMemberAuthUid(group.id, preparedMember, uid);
-      }
-      if ((_inviteTeamId ?? '').trim().isNotEmpty) {
-        await _db.addTeamMember(group.id, _inviteTeamId!.trim(), joinedUser);
       }
       await auth.setSession(joinedUser, group);
       if (mounted && auto) {
@@ -272,8 +320,13 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       if (familyName.isEmpty) {
         final memberships = await _db.findMembershipsByPhone(phone);
+        final teamMemberships = await _db.findTeamMembershipsByPhone(phone);
         if (memberships.isEmpty) {
-          _snack('لم أجد عائلة مرتبطة بهذا الرقم. راجع قائد العائلة.');
+          if (teamMemberships.isEmpty) {
+            _snack('لم أجد عائلة أو فريق مرتبط بهذا الرقم. راجع قائد العائلة.');
+            return;
+          }
+          await _openTeamMembership(teamMemberships.first);
           return;
         }
         final selected = memberships.length == 1
@@ -310,6 +363,23 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openTeamMembership(TeamMembership membership) async {
+    final auth = context.read<AuthProvider>();
+    await auth.ensureFirebaseIdentity();
+    await auth.setSession(
+      membership.member,
+      membership.group,
+      team: membership.team,
+      teamOnly: true,
+    );
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, '/team-home', arguments: {
+        'groupId': membership.group.id,
+        'teamId': membership.team.id,
+      });
     }
   }
 

@@ -3,6 +3,7 @@ import '../services/auth_service.dart';
 import '../services/database_service.dart';
 import '../models/user_model.dart';
 import '../models/group_model.dart';
+import '../models/team_model.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -10,10 +11,16 @@ class AuthProvider extends ChangeNotifier {
 
   UserModel? _user;
   GroupModel? _group;
+  String? _teamId;
+  TeamModel? _team;
+  bool _teamOnly = false;
   bool _loading = false;
 
   UserModel? get user => _user;
   GroupModel? get group => _group;
+  String? get teamId => _teamId;
+  TeamModel? get team => _team;
+  bool get isTeamOnly => _teamOnly;
   bool get loading => _loading;
   bool get isLoggedIn => _user != null && _group != null;
   String? get authUid => _authService.currentAuthUid;
@@ -36,6 +43,8 @@ class AuthProvider extends ChangeNotifier {
 
     _user = await _db.getActiveUser();
     _group = await _db.getActiveGroup();
+    _teamId = await _db.getActiveTeamId();
+    _teamOnly = await _db.isActiveTeamOnlySession();
     if (_user != null && _group != null) {
       // Important for the web/Firebase test: older local builds saved sessions in
       // SharedPreferences without creating the Firestore family document. If we
@@ -48,11 +57,35 @@ class AuthProvider extends ChangeNotifier {
         _group = null;
       } else {
         _group = freshGroup;
-        final freshMember = await _db.getMember(_group!.id, _user!.id);
-        if (freshMember != null) {
-          _user = freshMember;
-          if (uid != null && freshMember.authUid != uid) {
-            _user = await _db.bindMemberAuthUid(_group!.id, freshMember, uid);
+        if (_teamOnly && (_teamId ?? '').isNotEmpty) {
+          final freshTeam = await _db.getTeamById(_group!.id, _teamId!);
+          if (freshTeam == null || !freshTeam.hasMember(_user!.id)) {
+            await _db.clearActiveSession();
+            _user = null;
+            _group = null;
+            _team = null;
+            _teamId = null;
+            _teamOnly = false;
+          } else {
+            _team = freshTeam;
+            _user = _user!.copyWith(
+              name: freshTeam.memberNames[_user!.id] ?? _user!.name,
+              phone: freshTeam.memberPhones[_user!.id] ?? _user!.phone,
+              canViewReports: false,
+              canManageMembers: false,
+              canManageBudgets: false,
+            );
+          }
+        } else {
+          _teamOnly = false;
+          _team = null;
+          _teamId = null;
+          final freshMember = await _db.getMember(_group!.id, _user!.id);
+          if (freshMember != null) {
+            _user = freshMember;
+            if (uid != null && freshMember.authUid != uid) {
+              _user = await _db.bindMemberAuthUid(_group!.id, freshMember, uid);
+            }
           }
         }
       }
@@ -80,15 +113,46 @@ class AuthProvider extends ChangeNotifier {
     return _user!;
   }
 
-  Future<void> setSession(UserModel user, GroupModel group) async {
+  Future<void> setSession(
+    UserModel user,
+    GroupModel group, {
+    TeamModel? team,
+    bool teamOnly = false,
+  }) async {
     _user = user;
     _group = group;
-    await _db.saveActiveSession(user, group);
+    _team = team;
+    _teamId = team?.id;
+    _teamOnly = teamOnly && team != null;
+    await _db.saveActiveSession(
+      user,
+      group,
+      teamId: _teamId,
+      teamOnly: _teamOnly,
+    );
     notifyListeners();
   }
 
   Future<void> refreshCurrentUser() async {
     if (_user == null || _group == null) return;
+    if (_teamOnly && (_teamId ?? '').isNotEmpty) {
+      final freshTeam = await _db.getTeamById(_group!.id, _teamId!);
+      if (freshTeam != null && freshTeam.hasMember(_user!.id)) {
+        _team = freshTeam;
+        _user = _user!.copyWith(
+          name: freshTeam.memberNames[_user!.id] ?? _user!.name,
+          phone: freshTeam.memberPhones[_user!.id] ?? _user!.phone,
+        );
+        await _db.saveActiveSession(
+          _user!,
+          _group!,
+          teamId: freshTeam.id,
+          teamOnly: true,
+        );
+        notifyListeners();
+      }
+      return;
+    }
     final fresh = await _db.getMember(_group!.id, _user!.id);
     if (fresh != null) {
       _user = fresh;
@@ -118,6 +182,9 @@ class AuthProvider extends ChangeNotifier {
   Future<void> signOut() async {
     _user = null;
     _group = null;
+    _team = null;
+    _teamId = null;
+    _teamOnly = false;
     await _db.clearActiveSession();
     notifyListeners();
   }
