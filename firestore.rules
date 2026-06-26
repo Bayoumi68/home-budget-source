@@ -39,9 +39,9 @@ service cloud.firestore {
 
     // New invite flow: lookup an invite code directly instead of scanning families.
     match /inviteCodes/{code} {
-      allow get: if code.matches('[A-Z0-9]{6,12}');
+      allow get: if code.matches('[0-9]{6}') || code.matches('[A-Z0-9]{6,12}');
       allow list: if false;
-      allow create, update: if code.matches('[A-Z0-9]{6,12}')
+      allow create, update: if (code.matches('[0-9]{6}') || code.matches('[A-Z0-9]{6,12}'))
         && request.resource.data.inviteCode == code
         && request.resource.data.groupId is string;
       allow delete: if false;

@@ -37,7 +37,6 @@ class DatabaseService {
   static const _activeGroupKey = 'active_group';
   static const _sessionVersionKey = 'active_app_version';
   static final _secureRandom = Random.secure();
-  static const _inviteAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   final _authService = AuthService();
 
   SharedPreferences? _prefs;
@@ -66,8 +65,8 @@ class DatabaseService {
 
   String _newInviteCode() {
     return List.generate(
-      8,
-      (_) => _inviteAlphabet[_secureRandom.nextInt(_inviteAlphabet.length)],
+      6,
+      (_) => _secureRandom.nextInt(10).toString(),
     ).join();
   }
 
@@ -403,6 +402,14 @@ class DatabaseService {
         .toList();
   }
 
+  Future<TeamModel?> getTeamById(String groupId, String teamId) async {
+    if (teamId.trim().isEmpty) return null;
+    final doc = await _teams(groupId).doc(teamId).get();
+    if (!doc.exists || doc.data() == null) return null;
+    final data = doc.data()!;
+    return TeamModel.fromMap({...data, 'id': data['id'] ?? doc.id});
+  }
+
   Future<TeamModel> addTeam(
     String groupId, {
     required String name,
@@ -460,6 +467,20 @@ class DatabaseService {
     final ids = team.memberIds.where((id) => id != userId).toList();
     final names = Map<String, String>.from(team.memberNames)..remove(userId);
     await _teams(groupId).doc(team.id).set({
+      'memberIds': ids,
+      'memberNames': names,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> addTeamMember(
+      String groupId, String teamId, UserModel member) async {
+    final team = await getTeamById(groupId, teamId);
+    if (team == null) return;
+    final ids = <String>{...team.memberIds, member.id}.toList();
+    final names = Map<String, String>.from(team.memberNames)
+      ..[member.id] = member.name;
+    await _teams(groupId).doc(teamId).set({
       'memberIds': ids,
       'memberNames': names,
       'updatedAt': DateTime.now().toIso8601String(),

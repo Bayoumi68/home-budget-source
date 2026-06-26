@@ -9,6 +9,7 @@ import '../config/constants.dart';
 import '../providers/auth_provider.dart';
 import '../services/auth_service.dart';
 import '../services/database_service.dart';
+import '../models/user_model.dart';
 
 class AuthScreen extends StatefulWidget {
   final Uri? initialInvite;
@@ -33,6 +34,7 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _autoJoinStarted = false;
   bool _inviteFromLink = false;
   String? _inviteGroupId;
+  String? _inviteTeamId;
   int _mode = 0; // 0 create, 1 join by invite, 2 existing family
 
   @override
@@ -69,6 +71,7 @@ class _AuthScreenState extends State<AuthScreen> {
     final params = uri.queryParameters;
     final invite = params['invite'] ?? params['code'];
     final groupId = params['groupId'] ?? params['familyId'];
+    final teamId = params['teamId'];
     if (invite != null && invite.trim().isNotEmpty) {
       _inviteController.text = invite.trim().toUpperCase();
       _inviteFromLink = true;
@@ -76,6 +79,11 @@ class _AuthScreenState extends State<AuthScreen> {
     }
     if (groupId != null && groupId.trim().isNotEmpty) {
       _inviteGroupId = groupId.trim();
+      _inviteFromLink = true;
+      _mode = 1;
+    }
+    if (teamId != null && teamId.trim().isNotEmpty) {
+      _inviteTeamId = teamId.trim();
       _inviteFromLink = true;
       _mode = 1;
     }
@@ -217,14 +225,24 @@ class _AuthScreenState extends State<AuthScreen> {
       }
 
       final preparedMember = await _db.getMemberByPhone(group.id, phone);
+      UserModel joinedUser;
       if (preparedMember == null) {
-        _snack(
-            'رقمك غير موجود ضمن أعضاء هذه العائلة. راجع قائد العائلة أولًا.');
-        return;
+        final name = _nameController.text.trim();
+        if (name.isEmpty) {
+          _snack('اكتب اسمك أولًا حتى يتم إنشاء حسابك داخل العائلة.');
+          return;
+        }
+        final newMember = auth.createUser(name, phone: phone);
+        await _db.joinGroup(group.id, newMember);
+        joinedUser = newMember;
+      } else {
+        joinedUser = uid == null
+            ? preparedMember
+            : await _db.bindMemberAuthUid(group.id, preparedMember, uid);
       }
-      final joinedUser = uid == null
-          ? preparedMember
-          : await _db.bindMemberAuthUid(group.id, preparedMember, uid);
+      if ((_inviteTeamId ?? '').trim().isNotEmpty) {
+        await _db.addTeamMember(group.id, _inviteTeamId!.trim(), joinedUser);
+      }
       await auth.setSession(joinedUser, group);
       if (mounted && auto) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -409,8 +427,10 @@ class _AuthScreenState extends State<AuthScreen> {
                   style: TextStyle(fontSize: 12, color: Colors.white70),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'اختر ما تريد: إنشاء عائلة جديدة، الانضمام بدعوة، أو فتح عائلة موجودة.',
+                Text(
+                  inviteMode
+                      ? 'دعوة مباشرة: اكتب رقم تليفونك وكود الدعوة ثم ادخل. لو أول مرة، اكتب اسمك أيضًا.'
+                      : 'لو عندك دعوة اكتب الكود ورقم تليفونك. لو دخلت قبل كده اختار لدي عائلة واكتب رقمك فقط.',
                   style: TextStyle(fontSize: 15, color: Colors.white70),
                   textAlign: TextAlign.center,
                 ),
@@ -419,7 +439,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   _modeSelector(),
                   const SizedBox(height: 16),
                 ],
-                if (_mode == 0) ...[
+                if (_mode == 0 || inviteMode) ...[
                   _whiteField(_nameController, 'اسمك'),
                   const SizedBox(height: 12),
                 ],
@@ -428,6 +448,9 @@ class _AuthScreenState extends State<AuthScreen> {
                     keyboardType: TextInputType.phone, rtl: false),
                 if (inviteMode) ...[
                   const SizedBox(height: 12),
+                  _whiteField(_inviteController, 'كود الدعوة 6 أرقام',
+                      keyboardType: TextInputType.number, rtl: false),
+                  const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),
@@ -435,8 +458,10 @@ class _AuthScreenState extends State<AuthScreen> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(18),
                     ),
-                    child: const Text(
-                      'تم فتح دعوة العائلة. اكتب رقم الموبايل المسجل عند قائد العائلة، وسيظهر اسمك كما سجله القائد.',
+                    child: Text(
+                      (_inviteTeamId ?? '').trim().isNotEmpty
+                          ? 'هذه دعوة فريق داخل العائلة. اكتب رقمك وكود الدعوة. لو حسابك جديد اكتب اسمك، وبعد الدخول ستجد الفريق في زر الفرق.'
+                          : 'هذه دعوة عائلة. اكتب رقمك وكود الدعوة. لو حسابك جديد اكتب اسمك، وبعد الدخول سيظهر حسابك داخل العائلة.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: AppTheme.primaryGreen),
                     ),
@@ -563,9 +588,9 @@ class _AuthScreenState extends State<AuthScreen> {
 
     return Row(
       children: [
-        chip(0, 'إنشاء', Icons.group_add_rounded),
-        chip(1, 'انضمام', Icons.login_rounded),
-        chip(2, 'لدي عائلة', Icons.home_rounded),
+        chip(0, 'عائلة جديدة', Icons.group_add_rounded),
+        chip(1, 'معايا كود', Icons.login_rounded),
+        chip(2, 'دخلت قبل كده', Icons.home_rounded),
       ],
     );
   }

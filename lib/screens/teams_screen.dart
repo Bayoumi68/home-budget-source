@@ -504,9 +504,24 @@ class _TeamsScreenState extends State<TeamsScreen> {
   }
 
   Future<void> _shareTeamInvite(TeamModel team) async {
-    final message = 'تمت إضافتك إلى فريق ${team.name} داخل Budget Home.\n\n'
-        'افتح التطبيق أو الرابط التالي:\n${AppConstants.appWebLink}/install.html\n\n'
-        'بعد الدخول للعائلة ستجد الفريق في زر "الفرق".\n'
+    final group = await _db.getGroupById(widget.groupId);
+    final code = group?.inviteCode.trim() ?? '';
+    if (code.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لم أجد كود دعوة العائلة')),
+      );
+      return;
+    }
+
+    final link =
+        '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&teamId=${team.id}&v=${Uri.encodeComponent(AppConstants.appVersion)}';
+    final message = 'دعوة للانضمام إلى فريق ${team.name} داخل Budget Home.\n\n'
+        'افتح الرابط:\n$link\n\n'
+        'اكتب رقم تليفونك للدخول.\n'
+        'لو التطبيق طلب كود الدعوة استخدم هذا الكود فقط:\n$code\n\n'
+        'لو أول مرة تستخدم التطبيق اكتب اسمك أيضًا.\n'
+        'بعد الدخول ستجد الفريق في زر "الفرق".\n'
         'رصيد الفريق الحالي: ${team.balance.toStringAsFixed(0)} ج';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =

@@ -31,7 +31,9 @@
 <script>
   const params = new URLSearchParams(location.search);
   const code = params.get('invite') || params.get('code') || '';
+  const teamId = params.get('teamId') || '';
   const hasInvite = code || params.get('groupId') || params.get('familyId');
+  const isTeamInvite = hasInvite && teamId;
   const newFamilyMode = !hasInvite && (params.get('mode') === 'newFamily' || params.get('reset') === '1');
   const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isAndroid = /android/i.test(navigator.userAgent);
@@ -39,12 +41,14 @@
   webParams.set('web', '1');
   document.getElementById('webBtn').href = '/?' + webParams.toString();
   document.getElementById('title').textContent = hasInvite
-    ? 'Budget Home — دعوة عائلية'
+    ? (isTeamInvite ? 'Budget Home — دعوة فريق' : 'Budget Home — دعوة عائلية')
     : newFamilyMode
       ? 'Budget Home — تجربة وإنشاء عائلة جديدة'
       : 'Budget Home — فتح التطبيق';
   document.getElementById('desc').textContent = hasInvite
-    ? 'افتح نسخة الويب فورًا للانضمام. على أندرويد يمكنك تحميل APK اختياريًا لو تريد تجربة تطبيق مثبت.'
+    ? (isTeamInvite
+      ? 'هذه دعوة فريق داخل عائلة. افتح الويب واكتب رقم تليفونك وكود الدعوة. لو أول مرة اكتب اسمك أيضًا، وبعد الدخول ستجد الفريق في زر الفرق.'
+      : 'افتح نسخة الويب فورًا للانضمام. اكتب رقم تليفونك وكود الدعوة. لو أول مرة اكتب اسمك أيضًا.')
     : newFamilyMode
       ? 'هذا الرابط للتجربة فقط. افتح الويب واكتب اسمك ورقمك واختر إنشاء عائلة جديدة.'
     : 'نسخة الويب تعمل على أندرويد وآيفون بدون تثبيت. APK اختياري لأندرويد فقط.';
@@ -75,7 +79,9 @@
   }
   function openInvite(){
     const groupId = encodeURIComponent(params.get('groupId') || params.get('familyId') || '');
-    location.href = `budgethome://join?invite=${encodeURIComponent(code)}&groupId=${groupId}&auto=1`;
+    const team = encodeURIComponent(teamId);
+    const teamParam = team ? `&teamId=${team}` : '';
+    location.href = `budgethome://join?invite=${encodeURIComponent(code)}&groupId=${groupId}${teamParam}&auto=1`;
   }
 </script>
 </body>
