@@ -54,7 +54,7 @@ class DefaultFirebaseOptions {
     appId: '1:229990261595:web:d9cb284151bad290d3b07e',
     messagingSenderId: '229990261595',
     projectId: 'budget-home-bayoumi',
-    authDomain: 'budget-home-bayoumi.firebaseapp.com',
+    authDomain: 'budget-home-bayoumi.web.app',
     storageBucket: 'budget-home-bayoumi.firebasestorage.app',
     measurementId: 'G-0RNZB7PVNW',
   );
