@@ -12,6 +12,7 @@ class UserModel {
   final bool canManageMembers;
   final bool canManageBudgets;
   final bool phoneVerified;
+  final String? email;
   final DateTime createdAt;
 
   UserModel({
@@ -28,12 +29,17 @@ class UserModel {
     bool? canManageMembers,
     bool? canManageBudgets,
     this.phoneVerified = false,
+    this.email,
     DateTime? createdAt,
   })  : canAddExpenses = canAddExpenses ?? true,
         canViewReports = canViewReports ?? true,
         canManageMembers = canManageMembers ?? isAdmin,
         canManageBudgets = canManageBudgets ?? isAdmin,
         createdAt = createdAt ?? DateTime.now();
+
+  /// A member is "joined" once a real login (Google/email) is bound to them.
+  /// Admin-pre-registered members are pending until then.
+  bool get joined => authUid != null && authUid!.isNotEmpty;
 
   String get roleName => isAdmin ? 'قائد العائلة' : 'عضو';
   bool get hasSpendingLimit => monthlyLimit > 0;
@@ -57,6 +63,7 @@ class UserModel {
         'canManageMembers': canManageMembers,
         'canManageBudgets': canManageBudgets,
         'phoneVerified': phoneVerified,
+        'email': email,
         'createdAt': createdAt.toIso8601String(),
       };
 
@@ -76,6 +83,7 @@ class UserModel {
       canManageMembers: map['canManageMembers'] ?? isAdmin,
       canManageBudgets: map['canManageBudgets'] ?? isAdmin,
       phoneVerified: map['phoneVerified'] ?? false,
+      email: map['email'],
       createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
     );
   }
@@ -94,6 +102,7 @@ class UserModel {
     bool? canManageMembers,
     bool? canManageBudgets,
     bool? phoneVerified,
+    String? email,
     DateTime? createdAt,
   }) =>
       UserModel(
@@ -110,6 +119,7 @@ class UserModel {
         canManageMembers: canManageMembers ?? this.canManageMembers,
         canManageBudgets: canManageBudgets ?? this.canManageBudgets,
         phoneVerified: phoneVerified ?? this.phoneVerified,
+        email: email ?? this.email,
         createdAt: createdAt ?? this.createdAt,
       );
 }

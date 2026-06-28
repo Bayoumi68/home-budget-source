@@ -23,100 +23,184 @@ class AuthProvider extends ChangeNotifier {
   bool get isTeamOnly => _teamOnly;
   bool get loading => _loading;
   bool get isLoggedIn => _user != null && _group != null;
-  String? get authUid => _authService.currentAuthUid;
 
-  Future<String?> ensureFirebaseIdentity() =>
-      _authService.ensureFirebaseIdentity();
+  /// Signed in with a real credential (Google/email) but maybe not in a family.
+  bool get isAuthenticated => _authService.isLoggedIn();
+  String? get authUid => _authService.currentAuthUid;
+  String? get loginEmail => _authService.currentEmail;
+  String? get loginName => _authService.currentDisplayName;
+  String? get loginPhotoUrl => _authService.currentPhotoUrl;
+
+  // ─── Credential sign-in (no family context yet) ───
+
+  Future<String?> signInWithGoogle() async {
+    try {
+      await _authService.signInWithGoogle();
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return _authError(e);
+    }
+  }
+
+  Future<String?> signUpWithEmail(String email, String password) async {
+    try {
+      await _authService.signUpWithEmail(email, password);
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return _authError(e);
+    }
+  }
+
+  Future<String?> signInWithEmail(String email, String password) async {
+    try {
+      await _authService.signInWithEmail(email, password);
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return _authError(e);
+    }
+  }
+
+  String _authError(Object e) {
+    final s = e.toString();
+    if (s.contains('email-already-in-use')) {
+      return 'هذا البريد مسجّل بالفعل. سجّل الدخول بدل إنشاء حساب.';
+    }
+    if (s.contains('wrong-password') || s.contains('invalid-credential')) {
+      return 'بيانات الدخول غير صحيحة.';
+    }
+    if (s.contains('user-not-found')) return 'لا يوجد حساب بهذا البريد.';
+    if (s.contains('weak-password')) {
+      return 'كلمة المرور ضعيفة (6 أحرف على الأقل).';
+    }
+    if (s.contains('invalid-email')) return 'صيغة البريد غير صحيحة.';
+    if (s.contains('operation-not-allowed')) {
+      return 'طريقة الدخول غير مفعّلة في Firebase. فعّل Google/Email في الإعدادات.';
+    }
+    if (s.contains('popup-closed') ||
+        s.contains('cancelled') ||
+        s.contains('canceled') ||
+        s.contains('web-context-canceled')) {
+      return 'تم إلغاء تسجيل الدخول.';
+    }
+    if (s.contains('network')) return 'تحقق من الاتصال بالإنترنت.';
+    return 'تعذّر تسجيل الدخول. حاول مرة أخرى.';
+  }
+
+  String _resolveName(String typed) {
+    final t = typed.trim();
+    if (t.isNotEmpty) return t;
+    final n = (_authService.currentDisplayName ?? '').trim();
+    return n.isEmpty ? 'مستخدم' : n;
+  }
+
+  // ─── Create / Join family ───
+
+  /// Returns null on success, or an Arabic error message.
+  Future<String?> createFamily(
+      String familyName, String phone, String adminName) async {
+    final uid = _authService.currentAuthUid;
+    if (uid == null) return 'سجّل الدخول أولاً.';
+    try {
+      final group = await _db.createFamily(
+        name: familyName,
+        phone: phone,
+        adminName: _resolveName(adminName),
+        authUid: uid,
+        email: _authService.currentEmail,
+      );
+      final member = await _db.getMember(
+            group.id,
+            _authService.memberIdForPhone(phone),
+          ) ??
+          UserModel(
+            id: _authService.memberIdForPhone(phone),
+            name: _resolveName(adminName),
+            phone: phone,
+            authUid: uid,
+            email: _authService.currentEmail,
+            isAdmin: true,
+            phoneVerified: true,
+          );
+      await setSession(member, group);
+      return null;
+    } on FamilyNameTakenException catch (e) {
+      return e.toString();
+    } catch (e) {
+      return 'تعذّر إنشاء العائلة: $e';
+    }
+  }
+
+  Future<String?> joinFamily(String groupId, String phone, String name) async {
+    final uid = _authService.currentAuthUid;
+    if (uid == null) return 'سجّل الدخول أولاً.';
+    try {
+      final membership = await _db.joinFamily(
+        groupId: groupId,
+        phone: phone,
+        name: _resolveName(name),
+        authUid: uid,
+        email: _authService.currentEmail,
+      );
+      await setSession(membership.member, membership.group);
+      return null;
+    } on JoinFamilyException catch (e) {
+      return e.toString();
+    } catch (e) {
+      return 'تعذّر الانضمام: $e';
+    }
+  }
+
+  Future<List<FamilyMembership>> myMemberships() async {
+    final uid = _authService.currentAuthUid;
+    if (uid == null) return const [];
+    return _db.getMembershipsByAuthUid(uid);
+  }
+
+  Future<void> openMembership(FamilyMembership membership) =>
+      setSession(membership.member, membership.group);
+
+  // ─── Session ───
 
   Future<void> restoreSession() async {
     _loading = true;
     notifyListeners();
-    final uid = await ensureFirebaseIdentity();
     await _db.writeDiagnostic('app_open');
 
-    // In the web test phase, clear any local session from older builds.
-    // Otherwise the user can land directly in an old local family while Firestore stays empty.
-    final currentBuildSession = await _db.isSessionVersionCurrent();
-    if (!currentBuildSession) {
+    final uid = _authService.currentAuthUid;
+    if (uid == null) {
+      _user = null;
+      _group = null;
+      _team = null;
+      _teamId = null;
+      _teamOnly = false;
       await _db.clearActiveSession();
+      _loading = false;
+      notifyListeners();
+      return;
     }
 
-    _user = await _db.getActiveUser();
-    _group = await _db.getActiveGroup();
-    _teamId = await _db.getActiveTeamId();
-    _teamOnly = await _db.isActiveTeamOnlySession();
-    if (_user != null && _group != null) {
-      // Important for the web/Firebase test: older local builds saved sessions in
-      // SharedPreferences without creating the Firestore family document. If we
-      // restore that stale local session, the app looks logged in but nothing is
-      // written to Firestore. Force the user back to a clean Firebase-backed login.
-      final freshGroup = await _db.getGroupById(_group!.id);
-      if (freshGroup == null) {
-        await _db.clearActiveSession();
-        _user = null;
-        _group = null;
-      } else {
-        _group = freshGroup;
-        if (_teamOnly && (_teamId ?? '').isNotEmpty) {
-          final freshTeam = await _db.getTeamById(_group!.id, _teamId!);
-          if (freshTeam == null || !freshTeam.hasMember(_user!.id)) {
-            await _db.clearActiveSession();
-            _user = null;
-            _group = null;
-            _team = null;
-            _teamId = null;
-            _teamOnly = false;
-          } else {
-            _team = freshTeam;
-            _user = _user!.copyWith(
-              name: freshTeam.memberNames[_user!.id] ?? _user!.name,
-              phone: freshTeam.memberPhones[_user!.id] ?? _user!.phone,
-              canViewReports: false,
-              canManageMembers: false,
-              canManageBudgets: false,
-            );
-          }
-        } else {
-          _teamOnly = false;
-          _team = null;
-          _teamId = null;
-          final freshMember = await _db.getMember(_group!.id, _user!.id);
-          if (freshMember != null) {
-            _user = freshMember;
-            if (uid != null && freshMember.authUid != uid) {
-              _user = await _db.bindMemberAuthUid(_group!.id, freshMember, uid);
-            }
-          }
-        }
-      }
+    final memberships = await _db.getMembershipsByAuthUid(uid);
+    if (memberships.isEmpty) {
+      _user = null;
+      _group = null;
+    } else {
+      final activeGroup = await _db.getActiveGroup();
+      final chosen = memberships.firstWhere(
+        (m) => m.group.id == activeGroup?.id,
+        orElse: () => memberships.first,
+      );
+      _user = chosen.member;
+      _group = chosen.group;
+      _team = null;
+      _teamId = null;
+      _teamOnly = false;
+      await _db.saveActiveSession(_user!, _group!);
     }
     _loading = false;
     notifyListeners();
-  }
-
-  UserModel createUser(
-    String name, {
-    String? phone,
-    bool isAdmin = false,
-    bool phoneVerified = false,
-  }) {
-    final normalizedPhone = _authService.normalizePhone(phone ?? '');
-    _user = UserModel(
-      id: normalizedPhone.isNotEmpty
-          ? 'phone_$normalizedPhone'
-          : _authService.createUserId(),
-      name: name,
-      phone: normalizedPhone.isEmpty ? null : normalizedPhone,
-      authUid: _authService.currentAuthUid,
-      isAdmin: isAdmin,
-      canAddExpenses: true,
-      canViewReports: true,
-      canManageMembers: isAdmin,
-      canManageBudgets: isAdmin,
-      phoneVerified: phoneVerified,
-    );
-    notifyListeners();
-    return _user!;
   }
 
   Future<void> setSession(
@@ -130,35 +214,13 @@ class AuthProvider extends ChangeNotifier {
     _team = team;
     _teamId = team?.id;
     _teamOnly = teamOnly && team != null;
-    await _db.saveActiveSession(
-      user,
-      group,
-      teamId: _teamId,
-      teamOnly: _teamOnly,
-    );
+    await _db.saveActiveSession(user, group,
+        teamId: _teamId, teamOnly: _teamOnly);
     notifyListeners();
   }
 
   Future<void> refreshCurrentUser() async {
     if (_user == null || _group == null) return;
-    if (_teamOnly && (_teamId ?? '').isNotEmpty) {
-      final freshTeam = await _db.getTeamById(_group!.id, _teamId!);
-      if (freshTeam != null && freshTeam.hasMember(_user!.id)) {
-        _team = freshTeam;
-        _user = _user!.copyWith(
-          name: freshTeam.memberNames[_user!.id] ?? _user!.name,
-          phone: freshTeam.memberPhones[_user!.id] ?? _user!.phone,
-        );
-        await _db.saveActiveSession(
-          _user!,
-          _group!,
-          teamId: freshTeam.id,
-          teamOnly: true,
-        );
-        notifyListeners();
-      }
-      return;
-    }
     final fresh = await _db.getMember(_group!.id, _user!.id);
     if (fresh != null) {
       _user = fresh;
@@ -192,6 +254,9 @@ class AuthProvider extends ChangeNotifier {
     _teamId = null;
     _teamOnly = false;
     await _db.clearActiveSession();
+    try {
+      await _authService.signOutFirebase();
+    } catch (_) {}
     notifyListeners();
   }
 }

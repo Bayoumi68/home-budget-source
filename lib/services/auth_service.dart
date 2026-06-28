@@ -1,39 +1,49 @@
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:uuid/uuid.dart';
 
+/// Authentication is by real credentials now — Google or email/password.
+/// The phone number is NOT a login; it is only a family-level identifier
+/// (assigned by the admin, matched on join). No SMS, no SIM, no OTP.
 class AuthService {
-  final _uuid = const Uuid();
   static const defaultCountryCode = '+20';
 
-  FirebaseAuth get _firebaseAuth => FirebaseAuth.instance;
+  FirebaseAuth get _auth => FirebaseAuth.instance;
 
-  String? get currentAuthUid {
-    try {
-      return _firebaseAuth.currentUser?.uid;
-    } catch (_) {
-      return null;
+  User? get currentUser => _auth.currentUser;
+  String? get currentAuthUid => _auth.currentUser?.uid;
+  String? get currentEmail => _auth.currentUser?.email;
+  String? get currentDisplayName => _auth.currentUser?.displayName;
+  String? get currentPhotoUrl => _auth.currentUser?.photoURL;
+  bool isLoggedIn() => _auth.currentUser != null;
+
+  /// Google sign-in. Web uses a popup; mobile uses the native federated flow.
+  /// firebase_auth handles both, so no google_sign_in package is required.
+  Future<UserCredential> signInWithGoogle() {
+    final provider = GoogleAuthProvider()
+      ..setCustomParameters({'prompt': 'select_account'});
+    if (kIsWeb) {
+      return _auth.signInWithPopup(provider);
     }
+    return _auth.signInWithProvider(provider);
   }
 
-  Future<String?> ensureFirebaseIdentity() async {
-    try {
-      final current = _firebaseAuth.currentUser;
-      if (current != null) return current.uid;
-      final credential = await _firebaseAuth.signInAnonymously();
-      return credential.user?.uid;
-    } on FirebaseAuthException {
-      return null;
-    } catch (_) {
-      return null;
-    }
+  Future<UserCredential> signUpWithEmail(String email, String password) {
+    return _auth.createUserWithEmailAndPassword(
+      email: email.trim(),
+      password: password,
+    );
   }
 
-  Future<void> signOutFirebase() async {
-    await _firebaseAuth.signOut();
+  Future<UserCredential> signInWithEmail(String email, String password) {
+    return _auth.signInWithEmailAndPassword(
+      email: email.trim(),
+      password: password,
+    );
   }
 
-  // Local fallback ID remains available if Firebase Auth is not enabled yet.
-  String createUserId() => _uuid.v4();
+  Future<void> signOutFirebase() => _auth.signOut();
+
+  // ─── Phone helpers (identifier only, not auth) ───
 
   String normalizePhone(String input) {
     var phone = input.replaceAll(RegExp(r'[^0-9+]'), '');
@@ -52,8 +62,7 @@ class AuthService {
   }
 
   /// Reduces a phone number to its national significant digits so numbers can be
-  /// compared regardless of country-code / leading-zero formatting differences
-  /// (e.g. "+201001234567", "01001234567", "201001234567" all match).
+  /// compared regardless of country-code / leading-zero formatting differences.
   String _significantDigits(String input) {
     var digits = normalizePhone(input).replaceAll(RegExp(r'[^0-9]'), '');
     if (digits.startsWith('20')) digits = digits.substring(2);
@@ -69,5 +78,9 @@ class AuthService {
     return sa == sb || sa.endsWith(sb) || sb.endsWith(sa);
   }
 
-  bool isLoggedIn() => currentAuthUid != null;
+  /// Member doc id derived from a phone number (stable within a family).
+  String memberIdForPhone(String phone) {
+    final n = normalizePhone(phone);
+    return 'phone_$n';
+  }
 }

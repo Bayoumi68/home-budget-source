@@ -1,12 +1,9 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuth;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 import 'package:provider/provider.dart';
-import 'config/constants.dart';
 import 'config/theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/chat_provider.dart';
@@ -35,16 +32,6 @@ Future<void> main() async {
       );
       FirebaseFirestore.instance.settings =
           const Settings(persistenceEnabled: true);
-      // Disable real app verification so phone-auth uses a mock reCAPTCHA.
-      // Combined with Firebase test phone numbers this lets the family test the
-      // OTP flow with no image puzzle and no real SMS. Gated by a flag so it can
-      // be turned off for a real public launch (see AppConstants).
-      if (kDebugMode || AppConstants.phoneAuthTestingMode) {
-        try {
-          await FirebaseAuth.instance
-              .setSettings(appVerificationDisabledForTesting: true);
-        } catch (_) {}
-      }
       runApp(const BudgetHomeApp());
     } catch (e) {
       runApp(AppStartupError(message: e.toString()));

@@ -62,6 +62,16 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Family-name uniqueness lock. A signed-in user reserves a name when
+    // creating a family; names are permanent (no update/delete).
+    match /familyNames/{nameKey} {
+      allow get: if request.auth != null;
+      allow list: if false;
+      allow create: if request.auth != null
+        && request.resource.data.groupId is string;
+      allow update, delete: if false;
+    }
+
     match /families/{groupId} {
       allow get: if validGroupId(groupId);
       // Temporary compatibility for old 6-digit invites. New invites use

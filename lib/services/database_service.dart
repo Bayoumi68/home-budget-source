@@ -60,6 +60,8 @@ class DatabaseService {
       _fs.collection('families');
   CollectionReference<Map<String, dynamic>> get _inviteCodes =>
       _fs.collection('inviteCodes');
+  CollectionReference<Map<String, dynamic>> get _familyNames =>
+      _fs.collection('familyNames');
   CollectionReference<Map<String, dynamic>> _members(String groupId) =>
       _families.doc(groupId).collection('members');
   CollectionReference<Map<String, dynamic>> _messages(String groupId) =>
@@ -217,6 +219,184 @@ class DatabaseService {
     });
     await writeDiagnostic('create_group', groupId: id, userId: admin.id);
     return group;
+  }
+
+  // ─── New auth model: create / join / session-by-login ───
+
+  String _familyNameKey(String name) => CategoryUtils.key(name);
+
+  /// True if a family with this (normalized) name already exists.
+  Future<bool> isFamilyNameTaken(String name) async {
+    final key = _familyNameKey(name);
+    if (key.isEmpty) return false;
+    final lock = await _familyNames.doc(key).get();
+    if (lock.exists) return true;
+    // Fallback for families created before the name-lock existed.
+    return (await getGroupByName(name.trim())) != null;
+  }
+
+  /// Creates a family with a globally-unique name. Creator becomes admin,
+  /// identified by their login [authUid] + [phone]. Throws
+  /// [FamilyNameTakenException] if the name is taken.
+  Future<GroupModel> createFamily({
+    required String name,
+    required String phone,
+    required String adminName,
+    required String authUid,
+    String? email,
+  }) async {
+    final cleanName = name.trim();
+    if (await isFamilyNameTaken(cleanName)) {
+      throw FamilyNameTakenException(cleanName);
+    }
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final inviteCode = _newInviteCode();
+    final normalizedPhone = _authService.normalizePhone(phone);
+    final nameKey = _familyNameKey(cleanName);
+    final admin = UserModel(
+      id: _authService.memberIdForPhone(normalizedPhone),
+      name: adminName,
+      phone: normalizedPhone,
+      authUid: authUid,
+      email: email,
+      isAdmin: true,
+      canAddExpenses: true,
+      canViewReports: true,
+      canManageMembers: true,
+      canManageBudgets: true,
+      phoneVerified: true,
+    );
+    final group = GroupModel(
+      id: id,
+      name: cleanName,
+      adminId: admin.id,
+      members: [admin],
+      inviteCode: inviteCode,
+    );
+    await _familyNames.doc(nameKey).set({
+      'name': cleanName,
+      'groupId': id,
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+    await _families.doc(id).set({
+      ...group.toMap(),
+      'nameKey': nameKey,
+      'appVersion': AppConstants.appVersion,
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+    await _members(id).doc(admin.id).set({
+      ...admin.toMap(),
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+    await _inviteCodes.doc(inviteCode).set({
+      'groupId': id,
+      'inviteCode': inviteCode,
+      'createdAt': DateTime.now().toIso8601String(),
+      'appVersion': AppConstants.appVersion,
+    });
+    await writeDiagnostic('create_family', groupId: id, userId: admin.id);
+    return group;
+  }
+
+  /// Binds the logged-in user to a member slot in [groupId] for [phone].
+  /// Claims the admin-pre-registered slot if present, else creates one.
+  Future<FamilyMembership> joinFamily({
+    required String groupId,
+    required String phone,
+    required String name,
+    required String authUid,
+    String? email,
+  }) async {
+    final group = await getGroupById(groupId);
+    if (group == null) {
+      throw JoinFamilyException('لم أجد هذه العائلة. اطلب رابط دعوة جديد.');
+    }
+    final normalizedPhone = _authService.normalizePhone(phone);
+    final memberId = _authService.memberIdForPhone(normalizedPhone);
+    final existing = await getMemberByPhone(groupId, normalizedPhone);
+    final UserModel toSave;
+    if (existing != null) {
+      toSave = existing.copyWith(
+        id: memberId,
+        name: existing.name.trim().isEmpty ? name : existing.name,
+        phone: normalizedPhone,
+        authUid: authUid,
+        email: email,
+        phoneVerified: true,
+      );
+      if (existing.id != memberId) {
+        await _members(groupId).doc(existing.id).delete();
+      }
+    } else {
+      toSave = UserModel(
+        id: memberId,
+        name: name,
+        phone: normalizedPhone,
+        authUid: authUid,
+        email: email,
+        canAddExpenses: true,
+        canViewReports: true,
+        canManageMembers: false,
+        canManageBudgets: false,
+        phoneVerified: true,
+      );
+    }
+    await _members(groupId)
+        .doc(toSave.id)
+        .set(toSave.toMap(), SetOptions(merge: true));
+    return FamilyMembership(group: group, member: toSave);
+  }
+
+  /// All family memberships bound to a login [authUid] (for session restore).
+  Future<List<FamilyMembership>> getMembershipsByAuthUid(String authUid) async {
+    if (authUid.trim().isEmpty) return const [];
+    final q = await _fs
+        .collectionGroup('members')
+        .where('authUid', isEqualTo: authUid)
+        .limit(20)
+        .get();
+    final byGroup = <String, FamilyMembership>{};
+    for (final doc in q.docs) {
+      final groupRef = doc.reference.parent.parent;
+      if (groupRef == null || byGroup.containsKey(groupRef.id)) continue;
+      final group = await getGroupById(groupRef.id);
+      if (group == null) continue;
+      byGroup[group.id] =
+          FamilyMembership(group: group, member: UserModel.fromMap(doc.data()));
+    }
+    final items = byGroup.values.toList()
+      ..sort((a, b) => a.group.name.compareTo(b.group.name));
+    return items;
+  }
+
+  /// Admin pre-registers a member slot (pending until they join with their own
+  /// credentials). The assigned [phone] is what goes into their invite link.
+  Future<UserModel> addPendingMember(
+    String groupId, {
+    required String name,
+    required String phone,
+    bool canAddExpenses = true,
+    bool canViewReports = true,
+    bool canManageBudgets = false,
+    bool canManageMembers = false,
+    double monthlyLimit = 0,
+  }) async {
+    final normalizedPhone = _authService.normalizePhone(phone);
+    final member = UserModel(
+      id: _authService.memberIdForPhone(normalizedPhone),
+      name: name,
+      phone: normalizedPhone,
+      monthlyLimit: monthlyLimit,
+      canAddExpenses: canAddExpenses,
+      canViewReports: canViewReports,
+      canManageBudgets: canManageBudgets,
+      canManageMembers: canManageMembers,
+    );
+    await _members(groupId).doc(member.id).set({
+      ...member.toMap(),
+      'createdAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+    return member;
   }
 
   Future<GroupModel?> getGroupByInvite(String code) async {
@@ -1207,4 +1387,20 @@ class DatabaseService {
     }
     return result;
   }
+}
+
+/// Thrown by [DatabaseService.createFamily] when the family name is taken.
+class FamilyNameTakenException implements Exception {
+  final String name;
+  FamilyNameTakenException(this.name);
+  @override
+  String toString() => 'اسم العائلة "$name" مستخدم بالفعل. اختر اسمًا مختلفًا.';
+}
+
+/// Thrown by [DatabaseService.joinFamily] when the family can't be joined.
+class JoinFamilyException implements Exception {
+  final String message;
+  JoinFamilyException(this.message);
+  @override
+  String toString() => message;
 }

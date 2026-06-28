@@ -99,22 +99,22 @@ class _MembersScreenState extends State<MembersScreen> {
                             Row(
                               children: [
                                 Icon(
-                                  member.phoneVerified
+                                  member.joined
                                       ? Icons.verified_rounded
                                       : Icons.pending_rounded,
                                   size: 16,
-                                  color: member.phoneVerified
+                                  color: member.joined
                                       ? AppTheme.accentTeal
                                       : Colors.orange,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  member.phoneVerified
-                                      ? 'رقم محقق'
-                                      : 'بانتظار تحقق العضو من رقمه',
+                                  member.joined
+                                      ? 'انضم للعائلة'
+                                      : 'بانتظار انضمام العضو',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: member.phoneVerified
+                                    color: member.joined
                                         ? AppTheme.accentTeal
                                         : Colors.orange.shade800,
                                   ),
@@ -206,17 +206,15 @@ class _MembersScreenState extends State<MembersScreen> {
       return;
     }
     final permissions = _permissionsText(member);
+    final memberPhone = Uri.encodeComponent(member.phone ?? '');
     final inviteLanding =
-        '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&v=${Uri.encodeComponent(AppConstants.appVersion)}';
+        '${AppConstants.appWebLink}/install.html?join=1&groupId=${widget.groupId}&phone=$memberPhone&code=$code&v=${Uri.encodeComponent(AppConstants.appVersion)}';
     final message = 'مرحبًا ${member.name},\n'
         'تمت دعوتك للانضمام إلى عائلة ${group?.name ?? ''} على Home Budget.\n\n'
-        'افتح الرابط التالي:\n$inviteLanding\n\n'
-        'اكتب رقم تليفونك المسجل عند قائد العائلة.\n\n'
-        'كود الدعوة للنسخ:\n$code\n\n'
-        'افتح نسخة الويب من الصفحة مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
-        'أندرويد: APK اختياري لو تريد تجربة تطبيق مثبت أو لو الصوت من المتصفح لم يعمل.\n'
-        'آيفون: استخدم الويب، والتسجيل الصوتي قد لا يعمل بسبب قيود Safari.\n'
-        'اسمك داخل التطبيق سيظهر كما سجله قائد العائلة.\n\n'
+        'افتح رابط الدعوة:\n$inviteLanding\n\n'
+        'سجّل الدخول بحساب Google أو أنشئ حسابًا بالبريد، ثم أدخل رقم موبايلك للتأكيد:\n${member.phone ?? ''}\n\n'
+        'لو رقمك مختلف، راسل قائد العائلة ليرسل لك دعوة بالرقم الصحيح.\n\n'
+        'يعمل على الويب مباشرة (أندرويد/آيفون) بدون تثبيت، وAPK اختياري لأندرويد.\n\n'
         'صلاحياتك: $permissions';
     await Clipboard.setData(ClipboardData(text: message));
     final phone = _authService.whatsappPhone(member.phone ?? '');

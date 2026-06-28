@@ -24,7 +24,9 @@ class _SplashScreenState extends State<SplashScreen> {
   bool _hasInvite(Uri? uri) {
     if (uri == null) return false;
     final p = uri.queryParameters;
-    return (p['invite'] ?? p['code'] ?? '').trim().isNotEmpty;
+    return (p['invite'] ?? p['code'] ?? p['groupId'] ?? p['familyId'] ?? '')
+        .trim()
+        .isNotEmpty;
   }
 
   Future<Uri?> _initialInviteLink() async {
@@ -43,16 +45,15 @@ class _SplashScreenState extends State<SplashScreen> {
     final auth = context.read<AuthProvider>();
     final inviteLink = await _initialInviteLink();
 
-    // Important: if the app is opened from an invitation, do not restore an old
-    // local session. A previous install/session would otherwise jump straight
-    // into the old family and the invite would never be applied.
-    if (inviteLink != null || Uri.base.queryParameters['reset'] == '1') {
+    // Manual reset escape hatch (?reset=1) still signs out.
+    if (Uri.base.queryParameters['reset'] == '1') {
       await auth.signOut();
     }
 
     await auth.restoreSession();
     if (!mounted) return;
 
+    // An invite link always goes to the auth screen (it handles login + join).
     if (inviteLink != null) {
       Navigator.pushReplacementNamed(
         context,
@@ -63,17 +64,6 @@ class _SplashScreenState extends State<SplashScreen> {
     }
 
     if (auth.isLoggedIn && auth.group != null) {
-      if (auth.isTeamOnly && (auth.teamId ?? '').isNotEmpty) {
-        Navigator.pushReplacementNamed(
-          context,
-          '/team-home',
-          arguments: {
-            'groupId': auth.group!.id,
-            'teamId': auth.teamId,
-          },
-        );
-        return;
-      }
       Navigator.pushReplacementNamed(
         context,
         '/chat',
