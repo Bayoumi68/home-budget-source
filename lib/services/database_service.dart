@@ -78,6 +78,8 @@ class DatabaseService {
       _families.doc(groupId).collection('wallets');
   CollectionReference<Map<String, dynamic>> _teams(String groupId) =>
       _families.doc(groupId).collection('teams');
+  CollectionReference<Map<String, dynamic>> _learnedKeywords(String groupId) =>
+      _families.doc(groupId).collection('learnedKeywords');
 
   String _newInviteCode() {
     return List.generate(
@@ -1081,6 +1083,68 @@ class DatabaseService {
       'hidden': false,
       'createdAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
+  }
+
+  // ─── Offline learning: keyword → category, taught by user corrections ───
+
+  /// Returns a map of normalized-keyword-key → category.
+  Future<Map<String, String>> getLearnedKeywordsSync(String groupId) async {
+    final q = await _learnedKeywords(groupId).get();
+    final map = <String, String>{};
+    for (final d in q.docs) {
+      final data = d.data();
+      final kw = (data['keyword'] ?? '').toString();
+      final cat = (data['category'] ?? '').toString();
+      final key = CategoryUtils.key(kw);
+      if (key.isNotEmpty && cat.isNotEmpty) map[key] = cat;
+    }
+    return map;
+  }
+
+  Future<void> addLearnedKeyword(
+      String groupId, String keyword, String category) async {
+    final kw = keyword.trim();
+    final cat = category.trim();
+    if (kw.isEmpty || cat.isEmpty) return;
+    final id = _docSafeId(kw);
+    if (id.isEmpty) return;
+    await _learnedKeywords(groupId).doc(id).set({
+      'keyword': kw,
+      'category': cat,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Corrects an expense's category everywhere (transaction + chat message) and
+  /// teaches the parser the distinctive words from the original text.
+  Future<void> recategorizeExpense(
+      String groupId, String transactionId, String category) async {
+    final txnRef = _transactions(groupId).doc(transactionId);
+    final txnDoc = await txnRef.get();
+    if (!txnDoc.exists) return;
+    final txnNote = (txnDoc.data()?['note'] ?? '').toString();
+    await txnRef.set({'category': category}, SetOptions(merge: true));
+
+    final q = await _messages(groupId)
+        .where('transactionId', isEqualTo: transactionId)
+        .limit(1)
+        .get();
+    if (q.docs.isNotEmpty) {
+      final data = q.docs.first.data();
+      final amount = (data['amount'] as num?)?.toDouble() ?? 0;
+      final prefix =
+          (data['content'] ?? '').toString().startsWith('دخل') ? 'دخل' : 'مصروف';
+      await q.docs.first.reference.update({
+        'category': category,
+        'content': '$prefix ${amount.toStringAsFixed(0)} ج — $category',
+      });
+    }
+
+    // Teach: map the meaningful words of the original text to this category.
+    for (final token in CategoryUtils.meaningfulTokens(txnNote)) {
+      if (token.length >= 3) await addLearnedKeyword(groupId, token, category);
+    }
+    await recalculateBudgetsForCurrentMonth(groupId);
   }
 
   // ─── Family Notifications ───

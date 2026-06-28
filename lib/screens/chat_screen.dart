@@ -458,6 +458,67 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// Long-press menu for an expense: change its category (teaches the parser)
+  /// or delete it.
+  Future<void> _showExpenseActions(ChatMessage message) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.category_rounded),
+              title: const Text('تغيير النوع'),
+              onTap: () => Navigator.pop(ctx, 'recat'),
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.delete_outline_rounded, color: Colors.red),
+              title: const Text('حذف الإدخال',
+                  style: TextStyle(color: Colors.red)),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == 'delete') {
+      await _deleteExpenseEntry(message);
+    } else if (action == 'recat') {
+      await _recategorize(message);
+    }
+  }
+
+  Future<void> _recategorize(ChatMessage message) async {
+    final categories = context.read<BudgetProvider>().expenseCategories;
+    if (categories.isEmpty) return;
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('اختر النوع الصحيح'),
+        children: [
+          for (final c in categories)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, c),
+              child: Text('${AppConstants.categoryIcons[c] ?? '📌'}  $c'),
+            ),
+        ],
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    await context
+        .read<ChatProvider>()
+        .recategorizeExpense(widget.groupId, message, chosen);
+    await context.read<BudgetProvider>().refreshData(widget.groupId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text(
+              'تم تغيير النوع إلى "$chosen" — وسيتعلّمه المساعد للمرة القادمة')),
+    );
+  }
+
   Future<void> _openAccountDialog() async {
     final auth = context.read<AuthProvider>();
     final user = auth.user;
@@ -1093,7 +1154,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 !msg.isDeleted &&
                                 (msg.senderId == user?.id ||
                                     user?.isAdmin == true),
-                            onDelete: () => _deleteExpenseEntry(msg),
+                            onDelete: () => _showExpenseActions(msg),
                           );
                         },
                       ),

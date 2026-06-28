@@ -179,7 +179,9 @@ class ChatProvider extends ChangeNotifier {
           final categories = await _db.getExpenseCategoriesSync(groupId);
           final budgets = await _db.getBudgetsSync(groupId);
           final members = await _db.getMembersSync(groupId);
-          _applyStoredMatches(aiResult, text, categories, budgets, members);
+          final learned = await _db.getLearnedKeywordsSync(groupId);
+          _applyStoredMatches(aiResult, text, categories, budgets, members,
+              learned: learned);
         } catch (_) {
           // Keep the offline save path open even if matching data is not cached.
         }
@@ -306,6 +308,16 @@ class ChatProvider extends ChangeNotifier {
     } catch (_) {}
     notifyListeners();
     return null;
+  }
+
+  /// Corrects an expense's category and teaches the parser from it (offline).
+  Future<void> recategorizeExpense(
+      String groupId, ChatMessage message, String category) async {
+    final txId = message.transactionId;
+    if (txId == null || txId.isEmpty) return;
+    await _db.recategorizeExpense(groupId, txId, category);
+    _messages = await _db.getMessagesSync(groupId);
+    notifyListeners();
   }
 
   Future<String?> deleteExpenseEntry(
@@ -578,8 +590,9 @@ class ChatProvider extends ChangeNotifier {
     String text,
     List<String> categories,
     List<dynamic> budgets,
-    List<UserModel> members,
-  ) {
+    List<UserModel> members, {
+    Map<String, String> learned = const {},
+  }) {
     final candidates = <String>[];
     candidates.addAll(categories);
     candidates.addAll(budgets.map((b) => b.category));
@@ -613,6 +626,17 @@ class ChatProvider extends ChangeNotifier {
           _hardMatchStoredBudgetOrCategory(
               matchedMember.name, categories, budgets, members);
       if (memberBudgetMatch != null) aiResult['category'] = memberBudgetMatch;
+    }
+
+    // User-taught keywords win — this is the offline "learning" from corrections.
+    if (learned.isNotEmpty) {
+      final textKey = CategoryUtils.key(text);
+      for (final entry in learned.entries) {
+        if (entry.key.length >= 3 && textKey.contains(entry.key)) {
+          aiResult['category'] = entry.value;
+          break;
+        }
+      }
     }
   }
 

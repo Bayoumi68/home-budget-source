@@ -130,6 +130,14 @@ service cloud.firestore {
         allow delete: if validGroupId(groupId);
       }
 
+      // Offline learning: user-taught keyword → category corrections.
+      match /learnedKeywords/{kwId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && request.resource.data.category is string;
+        allow delete: if validGroupId(groupId);
+      }
+
       match /wallets/{walletId} {
         allow read: if validGroupId(groupId);
         allow create, update: if validGroupId(groupId)

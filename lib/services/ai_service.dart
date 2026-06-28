@@ -38,8 +38,10 @@ class AIService {
     if (original.isEmpty) return const [];
 
     final normalized = _normalize(original);
-    final amountMatches =
-        RegExp(r'(?<!\d)(\d+(?:\.\d+)?)(?!\d)').allMatches(normalized).toList();
+    final amountMatches = RegExp(r'(?<!\d)(\d+(?:\.\d+)?)(?!\d)')
+        .allMatches(normalized)
+        .where((m) => !_isQuantity(normalized, m))
+        .toList();
     if (amountMatches.length <= 1) {
       final single = parseExpenseMessage(original);
       return single == null ? const [] : [single];
@@ -153,6 +155,49 @@ class AIService {
     return CategoryUtils.normalize(input).replaceAll(',', '').trim();
   }
 
+  // A number right before one of these units is a quantity (count), not a price.
+  static final RegExp _quantityUnitRe = RegExp(
+      r'^\s*(?:كيلو|كيلوات|كجم|كيلوجرام|جرام|جم|علبه|علبة|عبوه|عبوة|قطعه|قطعة|'
+      r'كرتونه|كرتونة|زجاجه|زجاجة|لتر|لتره|متر|امتار|كوب|اكواب|كيس|اكياس|رغيف|'
+      r'ارغفه|عدد|نفر|افراد|فرد|دسته|دستة|باكو|باكت)(?:\s|$)');
+
+  // A money word right after a number marks it as the amount (e.g. "300 ج").
+  static final RegExp _moneyAfterRe =
+      RegExp(r'^\s*(?:جنيه|جنيهات|ج|egp|درهم|ريال)(?:\s|$)');
+
+  static bool _isQuantity(String normalized, RegExpMatch m) {
+    return _quantityUnitRe.hasMatch(normalized.substring(m.end));
+  }
+
+  static const _refundKeywords = [
+    'مرتجع',
+    'استرجعت',
+    'استرجاع',
+    'استرداد',
+    'استرجعوا',
+    'رجعولي',
+    'رجعوا فلوس',
+  ];
+
+  /// Capped Levenshtein distance for cheap typo tolerance.
+  static int _editDistance(String a, String b) {
+    if ((a.length - b.length).abs() > 2) return 99;
+    var prev = List<int>.generate(b.length + 1, (i) => i);
+    for (var i = 1; i <= a.length; i++) {
+      final cur = List<int>.filled(b.length + 1, 0);
+      cur[0] = i;
+      for (var j = 1; j <= b.length; j++) {
+        final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+        var min = cur[j - 1] + 1;
+        if (prev[j] + 1 < min) min = prev[j] + 1;
+        if (prev[j - 1] + cost < min) min = prev[j - 1] + cost;
+        cur[j] = min;
+      }
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+
   static String? matchExpenseCategoryFromList(
       String text, List<String> categories) {
     final sorted = categories
@@ -175,34 +220,87 @@ class AIService {
   }
 
   static double? _extractAmount(String normalized) {
-    final match = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(normalized);
-    if (match != null) return double.tryParse(match.group(1)!);
-
-    final words = normalized.split(RegExp(r'\s+'));
-    double total = 0;
-    bool found = false;
-    for (final word in words) {
-      final value = _numberWords[word];
-      if (value != null) {
-        total += value;
-        found = true;
+    final matches =
+        RegExp(r'(?<!\d)(\d+(?:\.\d+)?)(?!\d)').allMatches(normalized).toList();
+    if (matches.isEmpty) {
+      // Spelled-out Arabic numbers (e.g. "خمسين", "ميه").
+      double total = 0;
+      bool found = false;
+      for (final word in normalized.split(RegExp(r'\s+'))) {
+        final value = _numberWords[word];
+        if (value != null) {
+          total += value;
+          found = true;
+        }
+      }
+      return found ? total : null;
+    }
+    double? best;
+    int bestScore = -1;
+    double largest = 0;
+    for (final m in matches) {
+      final val = double.tryParse(m.group(1)!);
+      if (val == null || val <= 0) continue;
+      if (val > largest) largest = val;
+      if (_isQuantity(normalized, m)) continue; // "2 كيلو" → count, not price
+      final before = normalized.substring(0, m.start);
+      final after = normalized.substring(m.end);
+      var score = 0;
+      if (RegExp(r'ب\s*$').hasMatch(before)) score += 5; // "بـ300"
+      if (_moneyAfterRe.hasMatch(after)) score += 6; // "300 ج"
+      if (val >= 10) score += 1; // prices are usually ≥ 10
+      final better = best == null ||
+          score > bestScore ||
+          (score == bestScore && val > best);
+      if (better) {
+        best = val;
+        bestScore = score;
       }
     }
-    return found ? total : null;
+    // If every number looked like a quantity, fall back to the largest one.
+    best ??= largest > 0 ? largest : null;
+    return best;
   }
 
   static bool _looksLikeIncome(String normalized) {
+    // A refund/return means money coming back → treat as income.
+    if (_refundKeywords.any(normalized.contains)) return true;
     return _incomeKeywords.any(normalized.contains) &&
         !_expenseOnlyKeywords.any(normalized.contains);
   }
 
   static String _detectCategory(String normalized, {required bool isIncome}) {
     final categories = isIncome ? _incomeCategories : _expenseCategories;
+    final tokens = normalized
+        .split(RegExp(r'\s+'))
+        .where((t) => t.length >= 2)
+        .toList();
+    String best = 'أخرى';
+    int bestScore = 0;
     for (final item in categories) {
       final keywords = item['keywords'] as List<String>;
-      if (keywords.any(normalized.contains)) return item['category'] as String;
+      var score = 0;
+      for (final kw in keywords) {
+        if (normalized.contains(kw)) {
+          // Direct hit; multi-word and longer keywords are more specific.
+          score += kw.contains(' ') ? 3 : 2;
+          if (kw.length >= 5) score += 1;
+        } else if (!kw.contains(' ') && kw.length >= 4) {
+          // Fuzzy: a token within 1 edit of the keyword (typo tolerance).
+          for (final t in tokens) {
+            if (_editDistance(t, kw) <= 1) {
+              score += 1;
+              break;
+            }
+          }
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = item['category'] as String;
+      }
     }
-    return 'أخرى';
+    return best;
   }
 
   static String? _explicitExpenseLabel(String normalized) {
