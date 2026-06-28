@@ -167,6 +167,9 @@ class AuthProvider extends ChangeNotifier {
   Future<void> restoreSession() async {
     _loading = true;
     notifyListeners();
+    // Wait for Firebase to restore a persisted login before deciding where to
+    // route — otherwise a signed-in user gets bounced to the login screen.
+    await _authService.waitForAuthReady();
     await _db.writeDiagnostic('app_open');
 
     final uid = _authService.currentAuthUid;

@@ -57,6 +57,17 @@ class AuthService {
 
   Future<void> signOutFirebase() => _auth.signOut();
 
+  /// Waits until Firebase Auth has restored any persisted session. Right after
+  /// app start `currentUser` is null for a moment, so reading it too early would
+  /// wrongly send a logged-in user back to the login screen.
+  Future<void> waitForAuthReady() async {
+    try {
+      await _auth.authStateChanges().first.timeout(const Duration(seconds: 6));
+    } catch (_) {
+      // Timed out / errored — fall back to whatever currentUser is now.
+    }
+  }
+
   // ─── Phone helpers (identifier only, not auth) ───
 
   String normalizePhone(String input) {
