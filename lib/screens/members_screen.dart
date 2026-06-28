@@ -95,6 +95,32 @@ class _MembersScreenState extends State<MembersScreen> {
                             if (member.phone != null &&
                                 member.phone!.isNotEmpty)
                               Text('الموبايل: ${member.phone}'),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Icon(
+                                  member.phoneVerified
+                                      ? Icons.verified_rounded
+                                      : Icons.pending_rounded,
+                                  size: 16,
+                                  color: member.phoneVerified
+                                      ? AppTheme.accentTeal
+                                      : Colors.orange,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  member.phoneVerified
+                                      ? 'رقم محقق'
+                                      : 'بانتظار تحقق العضو من رقمه',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: member.phoneVerified
+                                        ? AppTheme.accentTeal
+                                        : Colors.orange.shade800,
+                                  ),
+                                ),
+                              ],
+                            ),
                             Text('صلاحيات: ${_permissionsText(member)}'),
                             const SizedBox(height: 4),
                             Text(
@@ -183,7 +209,7 @@ class _MembersScreenState extends State<MembersScreen> {
     final inviteLanding =
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&v=${Uri.encodeComponent(AppConstants.appVersion)}';
     final message = 'مرحبًا ${member.name},\n'
-        'تمت دعوتك للانضمام إلى عائلة ${group?.name ?? ''} على Budget Home.\n\n'
+        'تمت دعوتك للانضمام إلى عائلة ${group?.name ?? ''} على Home Budget.\n\n'
         'افتح الرابط التالي:\n$inviteLanding\n\n'
         'اكتب رقم تليفونك المسجل عند قائد العائلة.\n\n'
         'كود الدعوة للنسخ:\n$code\n\n'
@@ -240,8 +266,19 @@ class _MembersScreenState extends State<MembersScreen> {
                   keyboardType: TextInputType.phone,
                   textDirection: ui.TextDirection.ltr,
                   decoration: const InputDecoration(
-                    labelText: 'رقم الموبايل',
+                    labelText: 'رقم الموبايل (إلزامي)',
                     border: OutlineInputBorder(),
+                  ),
+                ),
+                const Align(
+                  alignment: Alignment.centerRight,
+                  child: Padding(
+                    padding: EdgeInsets.only(top: 6, right: 2),
+                    child: Text(
+                      'سيُطلب من العضو تأكيد هذا الرقم على هاتفه عند أول دخول.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                      textAlign: TextAlign.right,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),

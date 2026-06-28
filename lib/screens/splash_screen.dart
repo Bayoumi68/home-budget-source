@@ -110,7 +110,7 @@ class _SplashScreenState extends State<SplashScreen> {
             ),
             const SizedBox(height: 24),
             const Text(
-              'Budget Home',
+              'Home Budget',
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.bold,

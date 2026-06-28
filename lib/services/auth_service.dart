@@ -1,10 +1,8 @@
-import 'dart:math';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
 
 class AuthService {
   final _uuid = const Uuid();
-  final _random = Random.secure();
   static const defaultCountryCode = '+20';
 
   FirebaseAuth get _firebaseAuth => FirebaseAuth.instance;
@@ -53,8 +51,22 @@ class AuthService {
     return normalized.replaceAll('+', '');
   }
 
-  String generateOtp() {
-    return List.generate(6, (_) => _random.nextInt(10)).join();
+  /// Reduces a phone number to its national significant digits so numbers can be
+  /// compared regardless of country-code / leading-zero formatting differences
+  /// (e.g. "+201001234567", "01001234567", "201001234567" all match).
+  String _significantDigits(String input) {
+    var digits = normalizePhone(input).replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.startsWith('20')) digits = digits.substring(2);
+    if (digits.startsWith('0')) digits = digits.substring(1);
+    return digits;
+  }
+
+  /// True when two phone numbers refer to the same line, tolerating formatting.
+  bool phonesMatch(String a, String b) {
+    final sa = _significantDigits(a);
+    final sb = _significantDigits(b);
+    if (sa.length < 6 || sb.length < 6) return false;
+    return sa == sb || sa.endsWith(sb) || sb.endsWith(sa);
   }
 
   bool isLoggedIn() => currentAuthUid != null;

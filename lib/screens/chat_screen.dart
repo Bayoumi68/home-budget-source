@@ -498,6 +498,28 @@ class _ChatScreenState extends State<ChatScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 4),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await auth.signOut();
+                  if (mounted) {
+                    Navigator.pushNamedAndRemoveUntil(
+                        context, '/auth', (_) => false);
+                  }
+                },
+                icon: const Icon(Icons.logout_rounded),
+                label: const Text('تسجيل الخروج'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  side: const BorderSide(color: Colors.red),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -515,7 +537,7 @@ class _ChatScreenState extends State<ChatScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const ListTile(
-                title: Text('مشاركة Budget Home'),
+                title: Text('مشاركة Home Budget'),
                 subtitle: Text('اختار نوع الرسالة قبل فتح واتساب.'),
               ),
               ListTile(
@@ -550,7 +572,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final installUrl = code == null
         ? '${AppConstants.appWebLink}/install.html'
         : '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'دعوة فرد للانضمام إلى عائلتنا على Budget Home\n\n'
+    final message = 'دعوة فرد للانضمام إلى عائلتنا على Home Budget\n\n'
         'افتح الرابط التالي:\n$installUrl\n\n'
         'افتح نسخة الويب من الصفحة مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
         'أندرويد: APK اختياري لو تريد تجربة تطبيق مثبت أو لو الصوت من المتصفح لم يعمل.\n'
@@ -574,7 +596,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _shareNewFamilyTrial() async {
     final installUrl =
         '${AppConstants.appWebLink}/install.html?mode=newFamily&reset=1&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'جرّب Budget Home وأنشئ عائلتك أنت\n\n'
+    final message = 'جرّب Home Budget وأنشئ عائلتك أنت\n\n'
         'افتح الرابط التالي:\n$installUrl\n\n'
         'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
         'APK اختياري لأندرويد فقط لو تريد تطبيق مثبت أو صوت أفضل.\n\n'
@@ -867,8 +889,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'مشاركة التطبيق / دعوة فرد',
-            icon: const Icon(Icons.ios_share_rounded),
+            tooltip: 'دعوة فرد / مشاركة التطبيق',
+            icon: const Icon(Icons.person_add_alt_1_rounded),
             onPressed: _shareAppInvite,
           ),
           IconButton(
@@ -948,6 +970,34 @@ class _ChatScreenState extends State<ChatScreen> {
                         GroupSettingsScreen(groupId: widget.groupId)),
               ),
             ),
+          IconButton(
+            tooltip: 'تسجيل الخروج',
+            icon: const Icon(Icons.logout_rounded),
+            onPressed: () async {
+              final authProvider = context.read<AuthProvider>();
+              final navigator = Navigator.of(context);
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('تسجيل الخروج'),
+                  content:
+                      const Text('هل تريد الخروج من حسابك على هذا الجهاز؟'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('إلغاء')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('خروج')),
+                  ],
+                ),
+              );
+              if (ok != true) return;
+              await authProvider.signOut();
+              if (!mounted) return;
+              navigator.pushNamedAndRemoveUntil('/auth', (_) => false);
+            },
+          ),
         ],
       ),
       body: Column(

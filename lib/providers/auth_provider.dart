@@ -94,7 +94,12 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  UserModel createUser(String name, {String? phone, bool isAdmin = false}) {
+  UserModel createUser(
+    String name, {
+    String? phone,
+    bool isAdmin = false,
+    bool phoneVerified = false,
+  }) {
     final normalizedPhone = _authService.normalizePhone(phone ?? '');
     _user = UserModel(
       id: normalizedPhone.isNotEmpty
@@ -108,6 +113,7 @@ class AuthProvider extends ChangeNotifier {
       canViewReports: true,
       canManageMembers: isAdmin,
       canManageBudgets: isAdmin,
+      phoneVerified: phoneVerified,
     );
     notifyListeners();
     return _user!;

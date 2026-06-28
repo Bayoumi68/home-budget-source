@@ -28,6 +28,21 @@ service cloud.firestore {
         || (request.auth != null && request.resource.data.authUid == request.auth.uid);
     }
 
+    // Collection-group login lookups. The app queries `members` by phone
+    // (findMembershipsByPhone) and `teams` by memberIds (findTeamMembershipsByPhone)
+    // across ALL families. In a collection-group query the parent {groupId} is
+    // unbound, so the per-family rules below — which call validGroupId(groupId) —
+    // evaluate it as null and DENY the read (this was the earlier permission-denied).
+    // Grant read for these two collection groups to any signed-in caller. This is
+    // additive (OR'd with the rules below); writes stay governed by the strict
+    // per-family rules.
+    match /{path=**}/members/{memberId} {
+      allow read: if request.auth != null;
+    }
+    match /{path=**}/teams/{teamId} {
+      allow read: if request.auth != null;
+    }
+
     // Beta-safe diagnostics: clients can write small events, but nobody can read
     // all diagnostic data from the client.
     match /diagnostics/{docId} {

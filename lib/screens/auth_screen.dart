@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:app_links/app_links.dart';
 import '../config/theme.dart';
 import '../config/constants.dart';
 import '../providers/auth_provider.dart';
 import '../services/auth_service.dart';
 import '../services/database_service.dart';
+import '../services/phone_verification_service.dart';
 import '../models/user_model.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -28,6 +28,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _otpController = TextEditingController();
   final _db = DatabaseService();
   final _authService = AuthService();
+  final _verifier = PhoneVerificationService();
   final _appLinks = AppLinks();
   StreamSubscription<Uri>? _deepLinkSub;
   bool _busy = false;
@@ -131,27 +132,108 @@ class _AuthScreenState extends State<AuthScreen> {
     return true;
   }
 
-  Future<bool> _verifyPhoneWithDemoWhatsApp(String phone) async {
-    // V4.5 Firebase family test: do not leave the app to WhatsApp before creating
-    // the Firestore family. This is a product test, not real phone authentication.
-    // We keep the phone number as the family identity and move real Auth later.
-    if (!mounted) return false;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text(
-              'وضع اختبار Firebase: تم قبول رقم الموبايل بدون OTP حقيقي.')),
-    );
-    return true;
+  /// Proves the user controls [phone] before granting any session.
+  ///
+  /// Android first tries the one-tap SIM hint and auto-matches it against
+  /// [phone]; if the SIM number is unreadable or different, it falls back to
+  /// SMS OTP. Web always uses OTP. Returns true only when ownership is proven.
+  Future<bool> _verifyPhone(String phone) async {
+    if (_verifier.isAndroid) {
+      try {
+        final hint = await _verifier.readSimHint();
+        if (hint != null && _authService.phonesMatch(hint, phone)) {
+          return true;
+        }
+      } catch (_) {
+        // Hint failed for any reason → fall back to OTP below.
+      }
+    }
+    return _verifyWithOtp(phone);
   }
 
-  Future<void> _openWhatsAppOtp(String phone, String otp) async {
-    final digits = _authService.whatsappPhone(phone);
-    final message =
-        'كود التحقق لتطبيق Budget Home هو: $otp\nلا تشارك هذا الكود مع أي شخص.';
-    final uri =
-        Uri.parse('https://wa.me/$digits?text=${Uri.encodeComponent(message)}');
-    await launchUrl(uri, mode: LaunchMode.externalApplication)
-        .catchError((_) => false);
+  Future<bool> _verifyWithOtp(String phone) async {
+    PhoneOtpStart start;
+    try {
+      start = await _verifier.startOtp(phone);
+    } catch (e) {
+      debugPrint('startOtp failed: $e');
+      _snack('تعذّر الإرسال: $e');
+      return false;
+    }
+
+    if (start.status == PhoneOtpStatus.failed) {
+      _snack(start.error ?? 'تعذّر إرسال رمز التحقق.');
+      return false;
+    }
+
+    if (start.status == PhoneOtpStatus.autoVerified) {
+      try {
+        final verified =
+            await _verifier.confirmAutoCredential(start.autoCredential!);
+        if (verified != null && !_authService.phonesMatch(verified, phone)) {
+          _snack('رقم التحقق لا يطابق الرقم المسجل.');
+          return false;
+        }
+        return true;
+      } catch (_) {
+        _snack('تعذّر تأكيد رقم الموبايل. حاول مرة أخرى.');
+        return false;
+      }
+    }
+
+    final code = await _promptOtpCode(phone);
+    if (code == null || code.trim().isEmpty) return false;
+    try {
+      final verified = await _verifier.confirmOtp(start.session!, code.trim());
+      if (verified != null && !_authService.phonesMatch(verified, phone)) {
+        _snack('رقم التحقق لا يطابق الرقم المسجل.');
+        return false;
+      }
+      return true;
+    } catch (_) {
+      _snack('رمز التحقق غير صحيح. حاول مرة أخرى.');
+      return false;
+    }
+  }
+
+  Future<String?> _promptOtpCode(String phone) {
+    _otpController.clear();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تأكيد رقم الموبايل'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('أدخل رمز التحقق المرسل برسالة SMS إلى $phone'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _otpController,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              textDirection: ui.TextDirection.ltr,
+              maxLength: 6,
+              decoration: const InputDecoration(
+                hintText: '------',
+                counterText: '',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, _otpController.text.trim()),
+            child: const Text('تأكيد'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _createGroup() async {
@@ -165,6 +247,8 @@ class _AuthScreenState extends State<AuthScreen> {
     final auth = context.read<AuthProvider>();
     setState(() => _busy = true);
     try {
+      // Prove ownership of the number before looking up or opening any family.
+      if (!await _verifyPhone(phone)) return;
       final existing = await _db.findMembershipsByPhone(phone);
       if (existing.isNotEmpty && mounted) {
         final selected = await _chooseExistingMembership(
@@ -180,10 +264,9 @@ class _AuthScreenState extends State<AuthScreen> {
           return;
         }
       }
-      final verified = await _verifyPhoneWithDemoWhatsApp(phone);
-      if (!verified) return;
       await auth.ensureFirebaseIdentity();
-      final user = auth.createUser(name, phone: phone, isAdmin: true);
+      final user =
+          auth.createUser(name, phone: phone, isAdmin: true, phoneVerified: true);
       final group = await _db.createGroup(
         groupName,
         user.id,
@@ -198,6 +281,8 @@ class _AuthScreenState extends State<AuthScreen> {
           'groupName': group.name,
         });
       }
+    } catch (e, st) {
+      await _showDebugDialog('فشل إنشاء العائلة', e, st);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -212,7 +297,7 @@ class _AuthScreenState extends State<AuthScreen> {
     final auth = context.read<AuthProvider>();
     setState(() => _busy = true);
     try {
-      final verified = await _verifyPhoneWithDemoWhatsApp(phone);
+      final verified = await _verifyPhone(phone);
       if (!verified) return;
       final uid = await auth.ensureFirebaseIdentity();
 
@@ -242,6 +327,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 .createUser(
                   name,
                   phone: phone,
+                  phoneVerified: true,
                 )
                 .copyWith(
                   canViewReports: false,
@@ -283,7 +369,8 @@ class _AuthScreenState extends State<AuthScreen> {
           _snack('اكتب اسمك أولًا حتى يتم إنشاء حسابك داخل العائلة.');
           return;
         }
-        final newMember = auth.createUser(name, phone: phone);
+        final newMember =
+            auth.createUser(name, phone: phone, phoneVerified: true);
         await _db.joinGroup(group.id, newMember);
         joinedUser = newMember;
       } else {
@@ -305,6 +392,8 @@ class _AuthScreenState extends State<AuthScreen> {
           'groupName': group.name,
         });
       }
+    } catch (e, st) {
+      await _showDebugDialog('فشل الانضمام للعائلة', e, st);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -318,6 +407,7 @@ class _AuthScreenState extends State<AuthScreen> {
     final auth = context.read<AuthProvider>();
     setState(() => _busy = true);
     try {
+      if (!await _verifyPhone(phone)) return;
       if (familyName.isEmpty) {
         final memberships = await _db.findMembershipsByPhone(phone);
         final teamMemberships = await _db.findTeamMembershipsByPhone(phone);
@@ -361,6 +451,8 @@ class _AuthScreenState extends State<AuthScreen> {
           'groupName': group.name,
         });
       }
+    } catch (e, st) {
+      await _showDebugDialog('فشل فتح العائلة', e, st);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -454,6 +546,35 @@ class _AuthScreenState extends State<AuthScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
+  /// Shows the raw error + stack so failures are never silent during testing.
+  Future<void> _showDebugDialog(String title, Object error,
+      [StackTrace? stack]) async {
+    debugPrint('$title: $error\n$stack');
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              '$error\n\n${stack ?? ''}',
+              textDirection: ui.TextDirection.ltr,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('حسناً'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final inviteMode = _inviteFromLink &&
@@ -484,7 +605,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
                 const SizedBox(height: 22),
                 const Text(
-                  'Budget Home',
+                  'Home Budget',
                   style: TextStyle(
                     fontSize: 30,
                     fontWeight: FontWeight.bold,
@@ -510,16 +631,21 @@ class _AuthScreenState extends State<AuthScreen> {
                   const SizedBox(height: 16),
                 ],
                 if (_mode == 0 || inviteMode) ...[
-                  _whiteField(_nameController, 'اسمك'),
+                  _whiteField(_nameController, 'اكتب اسمك الأول',
+                      label: 'الاسم'),
                   const SizedBox(height: 12),
                 ],
                 const SizedBox(height: 12),
-                _whiteField(_phoneController, 'رقم الموبايل 010... أو +20...',
-                    keyboardType: TextInputType.phone, rtl: false),
+                _whiteField(_phoneController, '01012345678 أو +20...',
+                    keyboardType: TextInputType.phone,
+                    rtl: false,
+                    label: 'رقم الموبايل'),
                 if (inviteMode) ...[
                   const SizedBox(height: 12),
-                  _whiteField(_inviteController, 'كود الدعوة 6 أرقام',
-                      keyboardType: TextInputType.number, rtl: false),
+                  _whiteField(_inviteController, '6 أرقام',
+                      keyboardType: TextInputType.number,
+                      rtl: false,
+                      label: 'كود الدعوة'),
                   const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
@@ -538,15 +664,17 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                 ] else if (_mode == 0) ...[
                   const SizedBox(height: 12),
-                  _whiteField(_groupNameController, 'اسم العائلة الجديدة'),
+                  _whiteField(_groupNameController, 'مثال: عائلتي',
+                      label: 'اسم العائلة الجديدة'),
                 ] else if (_mode == 1) ...[
                   const SizedBox(height: 12),
-                  _whiteField(
-                      _inviteController, 'كود الدعوة عند الانضمام لعائلة'),
+                  _whiteField(_inviteController, 'الكود الذي وصلك من قائد العائلة',
+                      label: 'كود الدعوة'),
                 ] else ...[
                   const SizedBox(height: 12),
                   _whiteField(_groupNameController,
-                      'اسم العائلة الموجودة أو اتركه فارغًا للبحث برقمك'),
+                      'اتركه فارغًا للبحث برقمك',
+                      label: 'اسم العائلة الموجودة'),
                 ],
                 const SizedBox(height: 24),
                 if (!inviteMode && _mode == 0) ...[
@@ -670,8 +798,9 @@ class _AuthScreenState extends State<AuthScreen> {
     String hint, {
     TextInputType keyboardType = TextInputType.text,
     bool rtl = true,
+    String? label,
   }) {
-    return TextField(
+    final field = TextField(
       controller: controller,
       keyboardType: keyboardType,
       textAlign: TextAlign.center,
@@ -685,6 +814,25 @@ class _AuthScreenState extends State<AuthScreen> {
           borderSide: BorderSide.none,
         ),
       ),
+    );
+    if (label == null) return field;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(right: 8, bottom: 6),
+          child: Text(
+            label,
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        field,
+      ],
     );
   }
 }

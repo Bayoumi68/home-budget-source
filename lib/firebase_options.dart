@@ -50,19 +50,20 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyAXxcEF6a8II1rb63gBK0BeaQwcEBQK_DQ',
-    appId: '1:802504757679:web:2267ae9d3be07dc89c9f5a',
-    messagingSenderId: '802504757679',
-    projectId: 'budget-home-family-test',
-    authDomain: 'budget-home-family-test.firebaseapp.com',
-    storageBucket: 'budget-home-family-test.firebasestorage.app',
+    apiKey: 'AIzaSyCr6Zqi5VmO-2GI3zBDnFk5Ku6hRASwbaI',
+    appId: '1:229990261595:web:d9cb284151bad290d3b07e',
+    messagingSenderId: '229990261595',
+    projectId: 'budget-home-bayoumi',
+    authDomain: 'budget-home-bayoumi.firebaseapp.com',
+    storageBucket: 'budget-home-bayoumi.firebasestorage.app',
+    measurementId: 'G-0RNZB7PVNW',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDZOfaKWiONXYW9UdiezwQ_n11nJg3_AKA',
-    appId: '1:802504757679:android:94ff10a1ba43eeac9c9f5a',
-    messagingSenderId: '802504757679',
-    projectId: 'budget-home-family-test',
-    storageBucket: 'budget-home-family-test.firebasestorage.app',
+    apiKey: 'AIzaSyBmkvJhsNmUvyxD9zepHGt79z7PbIrYP20',
+    appId: '1:229990261595:android:7d04e99f1dbf3e45d3b07e',
+    messagingSenderId: '229990261595',
+    projectId: 'budget-home-bayoumi',
+    storageBucket: 'budget-home-bayoumi.firebasestorage.app',
   );
 }

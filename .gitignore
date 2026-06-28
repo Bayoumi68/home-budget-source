@@ -30,3 +30,4 @@ lib/config/firebase_options.dart
 # OS
 .DS_Store
 Thumbs.db
+android/.kotlin/

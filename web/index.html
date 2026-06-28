@@ -4,16 +4,16 @@
   <base href="$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="Budget Home - family budget manager">
+  <meta name="description" content="Home Budget - family budget manager">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Budget Home">
+  <meta name="apple-mobile-web-app-title" content="Home Budget">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="manifest" href="manifest.json">
-  <title>Budget Home</title>
+  <title>Home Budget</title>
   <style>
     body{margin:0;background:#053f38;color:white;font-family:Arial,Tahoma,sans-serif}
     #boot-message{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box}
@@ -21,9 +21,11 @@
   </style>
 </head>
 <body>
+  <!-- Container for Firebase phone-auth reCAPTCHA (Flutter web needs a real DOM node). -->
+  <div id="recaptcha-container" style="position:fixed;bottom:8px;left:8px;z-index:2147483647;"></div>
   <div id="boot-message">
     <div>
-      <strong>Budget Home</strong>
+      <strong>Home Budget</strong>
       <small>جاري فتح التطبيق...</small>
     </div>
   </div>
@@ -53,7 +55,7 @@
     setTimeout(() => {
       const box = document.getElementById('boot-message');
       if (!box) return;
-      box.innerHTML = '<div><strong>Budget Home</strong><small>لو ظلت الشاشة هنا، اضغط تحديث الصفحة مرة واحدة. بعض أجهزة iPhone تحتاج مسح كاش الموقع بعد التحديث.</small></div>';
+      box.innerHTML = '<div><strong>Home Budget</strong><small>لو ظلت الشاشة هنا، اضغط تحديث الصفحة مرة واحدة. بعض أجهزة iPhone تحتاج مسح كاش الموقع بعد التحديث.</small></div>';
     }, 12000);
   </script>
   <script src="flutter_bootstrap.js" async></script>

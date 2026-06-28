@@ -1,6 +1,6 @@
 {
-  "name": "Budget Home",
-  "short_name": "Budget Home",
+  "name": "Home Budget",
+  "short_name": "Home Budget",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#F7FAF7",

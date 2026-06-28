@@ -316,7 +316,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     final groupId = auth.group?.id ?? widget.groupId;
     final inviteLanding =
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'دعوة فرد للانضمام إلى عائلتنا على Budget Home\n\n'
+    final message = 'دعوة فرد للانضمام إلى عائلتنا على Home Budget\n\n'
         'افتح الرابط التالي:\n$inviteLanding\n\n'
         'قبل الإرسال تأكد أن قائد العائلة أضاف رقم تليفون العضو من شاشة الأعضاء.\n'
         'العضو يكتب رقم تليفونه المسجل.\n\n'
@@ -365,7 +365,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   Future<void> _shareAppTrialLink() async {
     final trialUrl =
         '${AppConstants.appWebLink}/install.html?mode=newFamily&reset=1&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'جرّب Budget Home وأنشئ عائلتك أنت\n\n'
+    final message = 'جرّب Home Budget وأنشئ عائلتك أنت\n\n'
         'افتح الرابط التالي:\n$trialUrl\n\n'
         'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
         'APK اختياري لأندرويد فقط لو تريد تطبيق مثبت أو صوت أفضل.\n\n'
@@ -657,7 +657,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           ),
           const SizedBox(height: 16),
           const Center(
-            child: Text('Budget Home v${AppConstants.appVersion}',
+            child: Text('Home Budget v${AppConstants.appVersion}',
                 style: TextStyle(color: Colors.grey, fontSize: 12)),
           ),
         ],

@@ -523,7 +523,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
 
     final link =
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&teamId=${team.id}&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'دعوة للانضمام إلى فريق ${team.name} داخل Budget Home.\n\n'
+    final message = 'دعوة للانضمام إلى فريق ${team.name} داخل Home Budget.\n\n'
         'افتح الرابط:\n$link\n\n'
         'اكتب رقم تليفونك للدخول.\n'
         'لو التطبيق طلب كود الدعوة استخدم هذا الكود فقط:\n$code\n\n'

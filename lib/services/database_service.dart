@@ -190,6 +190,8 @@ class DatabaseService {
       canViewReports: true,
       canManageMembers: true,
       canManageBudgets: true,
+      // The creator just proved ownership of this number at sign-up.
+      phoneVerified: true,
     );
     final group = GroupModel(
       id: id,
@@ -298,6 +300,7 @@ class DatabaseService {
           canViewReports: false,
           canManageMembers: false,
           canManageBudgets: false,
+          phoneVerified: true,
         );
         byKey[key] = TeamMembership(group: group, team: team, member: member);
       }
@@ -322,7 +325,9 @@ class DatabaseService {
             id: userToMerge.id,
             name: userToMerge.name.isEmpty ? prepared.name : userToMerge.name,
             phone: userToMerge.phone ?? prepared.phone,
-            authUid: userToMerge.authUid ?? prepared.authUid);
+            authUid: userToMerge.authUid ?? prepared.authUid,
+            phoneVerified:
+                userToMerge.phoneVerified || prepared.phoneVerified);
     await _members(groupId)
         .doc(toSave.id)
         .set(toSave.toMap(), SetOptions(merge: true));
@@ -333,7 +338,9 @@ class DatabaseService {
 
   Future<UserModel> bindMemberAuthUid(
       String groupId, UserModel member, String authUid) async {
-    final updated = member.copyWith(authUid: authUid);
+    // This is only ever called after the phone has just been verified on this
+    // device, so record the member as verified at the same time.
+    final updated = member.copyWith(authUid: authUid, phoneVerified: true);
     await _members(groupId)
         .doc(member.id)
         .set(updated.toMap(), SetOptions(merge: true));
@@ -1188,7 +1195,8 @@ class DatabaseService {
       'canAddExpenses',
       'canViewReports',
       'canManageMembers',
-      'canManageBudgets'
+      'canManageBudgets',
+      'phoneVerified'
     ]) {
       if (result[key] == 'true') result[key] = true;
       if (result[key] == 'false') result[key] = false;

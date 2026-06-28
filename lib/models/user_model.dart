@@ -11,6 +11,7 @@ class UserModel {
   final bool canViewReports;
   final bool canManageMembers;
   final bool canManageBudgets;
+  final bool phoneVerified;
   final DateTime createdAt;
 
   UserModel({
@@ -26,6 +27,7 @@ class UserModel {
     bool? canViewReports,
     bool? canManageMembers,
     bool? canManageBudgets,
+    this.phoneVerified = false,
     DateTime? createdAt,
   })  : canAddExpenses = canAddExpenses ?? true,
         canViewReports = canViewReports ?? true,
@@ -54,6 +56,7 @@ class UserModel {
         'canViewReports': canViewReports,
         'canManageMembers': canManageMembers,
         'canManageBudgets': canManageBudgets,
+        'phoneVerified': phoneVerified,
         'createdAt': createdAt.toIso8601String(),
       };
 
@@ -72,6 +75,7 @@ class UserModel {
       canViewReports: map['canViewReports'] ?? true,
       canManageMembers: map['canManageMembers'] ?? isAdmin,
       canManageBudgets: map['canManageBudgets'] ?? isAdmin,
+      phoneVerified: map['phoneVerified'] ?? false,
       createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
     );
   }
@@ -89,6 +93,7 @@ class UserModel {
     bool? canViewReports,
     bool? canManageMembers,
     bool? canManageBudgets,
+    bool? phoneVerified,
     DateTime? createdAt,
   }) =>
       UserModel(
@@ -104,6 +109,7 @@ class UserModel {
         canViewReports: canViewReports ?? this.canViewReports,
         canManageMembers: canManageMembers ?? this.canManageMembers,
         canManageBudgets: canManageBudgets ?? this.canManageBudgets,
+        phoneVerified: phoneVerified ?? this.phoneVerified,
         createdAt: createdAt ?? this.createdAt,
       );
 }
