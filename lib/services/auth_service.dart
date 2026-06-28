@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 /// Authentication is by real credentials now — Google or email/password.
 /// The phone number is NOT a login; it is only a family-level identifier
@@ -16,15 +17,28 @@ class AuthService {
   String? get currentPhotoUrl => _auth.currentUser?.photoURL;
   bool isLoggedIn() => _auth.currentUser != null;
 
-  /// Google sign-in. Web uses a popup; mobile uses the native federated flow.
-  /// firebase_auth handles both, so no google_sign_in package is required.
-  Future<UserCredential> signInWithGoogle() {
-    final provider = GoogleAuthProvider()
-      ..setCustomParameters({'prompt': 'select_account'});
+  /// Google sign-in. Web uses a popup; Android/iOS use the NATIVE account
+  /// picker (google_sign_in) — no browser — then exchanges the token with
+  /// Firebase.
+  Future<UserCredential> signInWithGoogle() async {
     if (kIsWeb) {
+      final provider = GoogleAuthProvider()
+        ..setCustomParameters({'prompt': 'select_account'});
       return _auth.signInWithPopup(provider);
     }
-    return _auth.signInWithProvider(provider);
+    final googleUser = await GoogleSignIn().signIn();
+    if (googleUser == null) {
+      throw FirebaseAuthException(
+        code: 'sign_in_canceled',
+        message: 'تم إلغاء تسجيل الدخول.',
+      );
+    }
+    final googleAuth = await googleUser.authentication;
+    final credential = GoogleAuthProvider.credential(
+      idToken: googleAuth.idToken,
+      accessToken: googleAuth.accessToken,
+    );
+    return _auth.signInWithCredential(credential);
   }
 
   Future<UserCredential> signUpWithEmail(String email, String password) {
