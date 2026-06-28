@@ -32,6 +32,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   bool _busy = false;
   bool _emailCreateMode = false; // false = sign in, true = create account
+  bool _creatingFamily = false; // reveals the create-family form
 
   // Join-invite params (set from a deep link / URL).
   String? _inviteGroupId;
@@ -388,28 +389,47 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Widget _homeChoiceCard(AuthProvider auth) {
+    // Step 2: the create-family form (only after tapping "إنشاء عائلة جديدة").
+    if (_creatingFamily) {
+      return Column(
+        children: [
+          _whiteField(_nameController, 'اسمك', label: 'الاسم'),
+          const SizedBox(height: 12),
+          _whiteField(_familyNameController, 'مثال: عائلتي',
+              label: 'اسم العائلة الجديدة'),
+          const SizedBox(height: 12),
+          _whiteField(_phoneController, '01012345678',
+              keyboardType: TextInputType.phone,
+              rtl: false,
+              label: 'رقم موبايلك'),
+          const SizedBox(height: 18),
+          _primaryButton(
+              _busy ? null : _createFamily, Icons.check_rounded, 'إنشاء العائلة'),
+          const SizedBox(height: 6),
+          TextButton(
+            onPressed: _busy ? null : () => setState(() => _creatingFamily = false),
+            child: const Text('رجوع', style: TextStyle(color: Colors.white)),
+          ),
+          _signedInFooter(auth),
+        ],
+      );
+    }
+    // Step 1: just two choices, no fields.
     return Column(
       children: [
-        _whiteField(_nameController, 'اسمك', label: 'الاسم'),
-        const SizedBox(height: 12),
-        _whiteField(_familyNameController, 'مثال: عائلتي',
-            label: 'اسم العائلة الجديدة'),
-        const SizedBox(height: 12),
-        _whiteField(_phoneController, '01012345678',
-            keyboardType: TextInputType.phone,
-            rtl: false,
-            label: 'رقم موبايلك'),
-        const SizedBox(height: 18),
-        _primaryButton(_busy ? null : _createFamily, Icons.group_add_rounded,
-            'إنشاء عائلة جديدة'),
+        _primaryButton(
+          _busy ? null : () => setState(() => _creatingFamily = true),
+          Icons.group_add_rounded,
+          'إنشاء عائلة جديدة',
+        ),
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
-          height: 50,
+          height: 52,
           child: OutlinedButton.icon(
             onPressed: _busy ? null : _openMyFamily,
-            icon: const Icon(Icons.home_rounded),
-            label: const Text('افتح عائلتي', style: TextStyle(fontSize: 16)),
+            icon: const Icon(Icons.login_rounded),
+            label: const Text('تسجيل الدخول', style: TextStyle(fontSize: 17)),
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.white,
               side: const BorderSide(color: Colors.white),
