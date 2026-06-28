@@ -182,7 +182,14 @@ class AuthProvider extends ChangeNotifier {
       return;
     }
 
-    final memberships = await _db.getMembershipsByAuthUid(uid);
+    List<FamilyMembership> memberships = const [];
+    try {
+      memberships = await _db.getMembershipsByAuthUid(uid);
+    } catch (_) {
+      // e.g. the authUid index is still building, or a transient network error.
+      // Don't brick the splash; treat as "no family yet" and let the user retry.
+      memberships = const [];
+    }
     if (memberships.isEmpty) {
       _user = null;
       _group = null;
