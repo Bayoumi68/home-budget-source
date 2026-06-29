@@ -8,6 +8,10 @@ class WalletModel {
   final DateTime? updatedAt;
   final String? updatedByName;
   final String? updatedByPhone;
+  // Ownership: 'admin' = a cash source the admin controls; 'member' = a single
+  // member's pocket. ownerId is the member's user id for member wallets.
+  final String ownerType;
+  final String? ownerId;
 
   WalletModel({
     required this.id,
@@ -19,7 +23,12 @@ class WalletModel {
     this.updatedAt,
     this.updatedByName,
     this.updatedByPhone,
+    this.ownerType = 'admin',
+    this.ownerId,
   });
+
+  bool get isMemberWallet => ownerType == 'member';
+  bool get isAdminWallet => ownerType == 'admin';
 
   /// "Name (phone)" of whoever last touched the wallet, or a dash.
   String get updatedByLabel {
@@ -41,6 +50,8 @@ class WalletModel {
         'updatedAt': updatedAt?.toIso8601String(),
         'updatedByName': updatedByName,
         'updatedByPhone': updatedByPhone,
+        'ownerType': ownerType,
+        'ownerId': ownerId,
       };
 
   factory WalletModel.fromMap(Map<String, dynamic> map) => WalletModel(
@@ -53,6 +64,8 @@ class WalletModel {
         updatedAt: DateTime.tryParse((map['updatedAt'] ?? '').toString()),
         updatedByName: map['updatedByName'],
         updatedByPhone: map['updatedByPhone'],
+        ownerType: (map['ownerType'] ?? 'admin').toString(),
+        ownerId: map['ownerId'],
       );
 
   WalletModel copyWith({
@@ -65,6 +78,8 @@ class WalletModel {
     DateTime? updatedAt,
     String? updatedByName,
     String? updatedByPhone,
+    String? ownerType,
+    String? ownerId,
   }) =>
       WalletModel(
         id: id ?? this.id,
@@ -76,5 +91,7 @@ class WalletModel {
         updatedAt: updatedAt ?? this.updatedAt,
         updatedByName: updatedByName ?? this.updatedByName,
         updatedByPhone: updatedByPhone ?? this.updatedByPhone,
+        ownerType: ownerType ?? this.ownerType,
+        ownerId: ownerId ?? this.ownerId,
       );
 }

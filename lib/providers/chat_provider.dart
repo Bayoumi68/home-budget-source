@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:intl/intl.dart';
 import '../models/chat_message_model.dart';
 import '../models/transaction_model.dart';
 import '../models/user_model.dart';
 import '../models/family_notification_model.dart';
 import '../models/wallet_model.dart';
+import '../models/wallet_entry_model.dart';
 import '../models/team_model.dart';
 import '../services/database_service.dart';
 import '../services/ai_service.dart';
@@ -214,16 +216,12 @@ class ChatProvider extends ChangeNotifier {
         return warning;
       }
 
-      if (isExpense &&
+      // Monthly cap is a soft RED flag, not a block: the expense still posts
+      // but is marked over-cap for both admin and member to see.
+      final overCap = isExpense &&
           user.monthlyLimit > 0 &&
-          user.currentSpending + amount > user.monthlyLimit) {
-        final remaining = user.monthlyLimit - user.currentSpending;
-        final warning =
-            '⚠️ المصروف يتجاوز حدك الشهري. المتبقي لك تقريبًا ${remaining.toStringAsFixed(0)} ج.';
-        await _sendSystemMessage(groupId, warning);
-        await refreshMessages(groupId);
-        return warning;
-      }
+          user.currentSpending + amount > user.monthlyLimit;
+      aiResult['overCap'] = overCap;
 
       if (isExpense && team != null) {
         final warning = _validateTeamBalance(team, amount);
@@ -260,6 +258,7 @@ class ChatProvider extends ChangeNotifier {
       category: aiResult?['category'] as String?,
       transactionId: transactionId,
       timestamp: DateTime.now(),
+      overCap: aiResult?['overCap'] == true,
     );
     await _db.sendMessage(message);
 
@@ -281,6 +280,7 @@ class ChatProvider extends ChangeNotifier {
         note: aiResult['note'] as String?,
         walletId: isExpense ? wallet?.id : null,
         walletName: isExpense ? wallet?.name : null,
+        overCap: aiResult['overCap'] == true,
       );
       await _db.addTransaction(transaction);
       if (isExpense && wallet != null) {
@@ -346,8 +346,8 @@ class ChatProvider extends ChangeNotifier {
     WalletModel wallet, {
     String? note,
   }) async {
-    if (!user.canAddExpenses) {
-      const warning = '⛔ ليس لديك صلاحية إضافة عمليات. اطلب من قائد العائلة تفعيلها.';
+    if (!user.isAdmin) {
+      const warning = '⛔ إضافة الأموال من صلاحية القائد فقط.';
       await _sendSystemMessage(groupId, warning);
       await refreshMessages(groupId);
       return warning;
@@ -375,6 +375,75 @@ class ChatProvider extends ChangeNotifier {
       await _sendSystemMessage(groupId, warning);
       await refreshMessages(groupId);
       return warning;
+    }
+  }
+
+  /// Answers "رصيد المحفظة" — posts the selected wallet's current balance.
+  Future<void> showWalletBalance(String groupId, WalletModel wallet) async {
+    var w = wallet;
+    try {
+      final wallets = await _db.getWalletsSync(groupId);
+      w = wallets.firstWhere((x) => x.id == wallet.id, orElse: () => wallet);
+    } catch (_) {}
+    final updated = w.updatedAt == null
+        ? ''
+        : '\nآخر تحديث: ${DateFormat('yyyy/MM/dd HH:mm').format(w.updatedAt!)}';
+    final by = (w.updatedByName ?? '').trim().isEmpty
+        ? ''
+        : ' — بواسطة ${w.updatedByLabel}';
+    await _sendSystemMessage(
+      groupId,
+      '👛 رصيد ${w.name}: ${w.balance.toStringAsFixed(0)} ج$updated$by',
+    );
+    await refreshMessages(groupId);
+  }
+
+  /// Answers "حركة المحفظة / تقرير المحفظة" — posts the recent ledger lines.
+  Future<void> showWalletMovement(String groupId, WalletModel wallet) async {
+    final entries = await _db.getWalletEntriesSync(groupId, wallet.id);
+    if (entries.isEmpty) {
+      await _sendSystemMessage(
+          groupId, '📒 لا توجد حركة على ${wallet.name} بعد.');
+      await refreshMessages(groupId);
+      return;
+    }
+    final recent = entries.reversed.take(12).toList(); // newest first
+    final df = DateFormat('MM/dd HH:mm');
+    final current = entries.last.balanceAfter; // last = newest = current
+    final lines = <String>[
+      '📒 حركة ${wallet.name} — آخر ${recent.length} عملية:',
+    ];
+    for (final e in recent) {
+      final sign = e.isDebit ? '+' : '-';
+      lines.add(
+          '${df.format(e.at)} | ${_entryStatementLabel(e)} | $sign${e.amount.toStringAsFixed(0)} | رصيد ${e.balanceAfter.toStringAsFixed(0)}');
+    }
+    if (entries.length > recent.length) {
+      lines.add('… الباقي في شاشة المحافظ بالإعدادات.');
+    }
+    lines.add('الرصيد الحالي: ${current.toStringAsFixed(0)} ج');
+    await _sendSystemMessage(groupId, lines.join('\n'));
+    await refreshMessages(groupId);
+  }
+
+  String _entryStatementLabel(WalletEntryModel e) {
+    final note = (e.note ?? '').trim();
+    if (note.isNotEmpty) return note;
+    switch (e.source) {
+      case 'opening':
+        return 'رصيد افتتاحي';
+      case 'injection':
+        return 'إيداع نقدي';
+      case 'expense':
+        return 'مصروف';
+      case 'adjustment':
+        return 'تعديل رصيد';
+      case 'reversal':
+        return 'إرجاع';
+      case 'transfer':
+        return 'تحويل';
+      default:
+        return e.source;
     }
   }
 
@@ -508,16 +577,10 @@ class ChatProvider extends ChangeNotifier {
     final totalExpense = results
         .where((r) => r['isExpense'] == true)
         .fold<double>(0, (sum, r) => sum + (r['amount'] as double));
-    if (hasExpense &&
+    // Soft red flag (not a block): mark over-cap, still post.
+    final overCapAll = hasExpense &&
         user.monthlyLimit > 0 &&
-        user.currentSpending + totalExpense > user.monthlyLimit) {
-      final remaining = user.monthlyLimit - user.currentSpending;
-      final warning =
-          '⚠️ المصروفات تتجاوز حدك الشهري. المتبقي لك تقريبًا ${remaining.toStringAsFixed(0)} ج.';
-      await _sendSystemMessage(groupId, warning);
-      await refreshMessages(groupId);
-      return warning;
-    }
+        user.currentSpending + totalExpense > user.monthlyLimit;
 
     if (team != null && hasExpense) {
       final warning = _validateTeamBalance(team, totalExpense);
@@ -553,6 +616,7 @@ class ChatProvider extends ChangeNotifier {
         category: result['category'] as String,
         transactionId: transactionId,
         timestamp: DateTime.now(),
+        overCap: (result['isExpense'] == true) && overCapAll,
       );
       await _db.sendMessage(message);
       final isExpense = result['isExpense'] as bool;
@@ -563,6 +627,7 @@ class ChatProvider extends ChangeNotifier {
         userId: transactionUserId,
         userName: transactionUserName,
         amount: amount,
+        overCap: isExpense && overCapAll,
         category: result['category'] as String,
         isExpense: isExpense,
         note: result['note'] as String?,

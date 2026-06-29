@@ -91,6 +91,9 @@ class ChatBubble extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isDeleted ? Colors.grey.shade200 : (isMe ? AppTheme.myMessageBubble : AppTheme.otherMessageBubble),
                 borderRadius: borderRadius,
+                border: (message.overCap && !isDeleted)
+                    ? Border.all(color: AppTheme.expenseRed, width: 1.5)
+                    : null,
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.05),
@@ -129,6 +132,18 @@ class ChatBubble extends StatelessWidget {
                             ),
                           ],
                         ),
+                        if (message.overCap)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 2),
+                            child: Text(
+                              '⚠ تجاوز الحد الشهري',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.expenseRed,
+                              ),
+                            ),
+                          ),
                         const SizedBox(height: 4),
                       ],
                       Text(

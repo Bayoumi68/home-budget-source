@@ -41,6 +41,9 @@ class BudgetProvider extends ChangeNotifier {
   Future<void> loadData(String groupId) async {
     _loading = true;
     notifyListeners();
+    try {
+      await _db.provisionMemberWallets(groupId);
+    } catch (_) {}
     _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
     _budgets = await _db.getBudgetsSync(groupId);
     _transactions = await _db.getTransactionsSync(groupId);
@@ -206,6 +209,35 @@ class BudgetProvider extends ChangeNotifier {
         byPhone: byPhone,
       );
       _wallets = await _db.getWalletsSync(groupId);
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Move money between two wallets (admin funding/withdrawal).
+  /// Returns an Arabic error string, or null on success.
+  Future<String?> transfer(
+    String groupId, {
+    required String fromWalletId,
+    required String toWalletId,
+    required double amount,
+    String? byName,
+    String? byPhone,
+  }) async {
+    _loading = true;
+    notifyListeners();
+    try {
+      final err = await _db.transferBetweenWallets(
+        groupId,
+        fromWalletId: fromWalletId,
+        toWalletId: toWalletId,
+        amount: amount,
+        byName: byName,
+        byPhone: byPhone,
+      );
+      _wallets = await _db.getWalletsSync(groupId);
+      return err;
     } finally {
       _loading = false;
       notifyListeners();

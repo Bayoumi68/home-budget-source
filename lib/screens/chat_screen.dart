@@ -16,10 +16,8 @@ import '../providers/budget_provider.dart';
 import '../providers/notification_provider.dart';
 import '../models/chat_message_model.dart';
 import '../models/wallet_model.dart';
-import '../models/team_model.dart';
 import '../services/voice_service.dart';
 import '../services/ai_service.dart';
-import '../services/database_service.dart';
 import '../services/local_notice_service.dart';
 import '../utils/category_utils.dart';
 import '../widgets/chat_bubble.dart';
@@ -48,7 +46,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   final _textController = TextEditingController();
   final _voiceService = VoiceService();
-  final _db = DatabaseService();
   final _localNotice = const LocalNoticeService();
   final _appLinks = AppLinks();
   bool _isRecording = false;
@@ -224,11 +221,70 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) setState(() => _isRecording = false);
     }
 
-    // "Cash into wallet" (top-up) — handled before expense parsing.
+    // Wallet questions (read-only): balance / movement — before expense parsing.
+    final walletQuery = AIService.parseWalletQuery(text);
+    if (walletQuery != null) {
+      final isBalance = walletQuery['type'] == 'balance';
+      final qUser = context.read<AuthProvider>().user;
+      WalletModel? wallet;
+      if (qUser != null && !qUser.isAdmin) {
+        // A member can only ask about their own wallet.
+        for (final w in context.read<BudgetProvider>().wallets) {
+          if (w.isMemberWallet && w.ownerId == qUser.id) {
+            wallet = w;
+            break;
+          }
+        }
+      } else {
+        wallet = await _pickAnyWallet(
+          title: isBalance ? 'رصيد أي محفظة؟' : 'حركة أي محفظة؟',
+          hint: walletQuery['walletHint'] as String?,
+        );
+      }
+      if (wallet == null || wallet == _walletSelectionCancelled) {
+        _putTextInInput(text);
+        _lastSubmittedText = null;
+        _lastSubmittedAt = null;
+        if (mounted) setState(() => _isSending = false);
+        return;
+      }
+      _textController.clear();
+      setState(() => _lastParsedPreview = null);
+      try {
+        final chat = context.read<ChatProvider>();
+        if (isBalance) {
+          await chat.showWalletBalance(widget.groupId, wallet);
+        } else {
+          await chat.showWalletMovement(widget.groupId, wallet);
+        }
+        await chat.refreshMessages(widget.groupId);
+      } finally {
+        _voiceText = '';
+        if (mounted) setState(() => _isSending = false);
+      }
+      _scrollToBottom();
+      return;
+    }
+
+    // "Cash into wallet" (external cash in) — admin-only, into an admin wallet.
     final injection = AIService.parseWalletInjection(text);
     if (injection != null) {
-      final wallet = await _pickWalletForInjection(
+      final actor = context.read<AuthProvider>().user;
+      if (actor == null || !actor.isAdmin) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('إضافة الأموال من صلاحية القائد فقط.')));
+        }
+        _putTextInInput(text);
+        _lastSubmittedText = null;
+        _lastSubmittedAt = null;
+        if (mounted) setState(() => _isSending = false);
+        return;
+      }
+      final wallet = await _pickAnyWallet(
+        title: 'تضيف الفلوس في أي محفظة؟',
         hint: injection['walletHint'] as String?,
+        adminOnly: true,
       );
       if (wallet == null || wallet == _walletSelectionCancelled) {
         _putTextInInput(text);
@@ -281,17 +337,26 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
     }
-    final selectedTeam = totalExpense > 0 ? await _pickTeamForExpense() : null;
-    if (totalExpense > 0 && selectedTeam == _teamSelectionCancelled) {
+    // Teams are reporting rollups now — no per-expense team selection.
+    final selectedWallet =
+        totalExpense > 0 ? await _pickWalletForExpense(totalExpense) : null;
+    if (totalExpense > 0 && selectedWallet == _walletSelectionCancelled) {
       _putTextInInput(text);
       _lastSubmittedText = null;
       _lastSubmittedAt = null;
       if (mounted) setState(() => _isSending = false);
       return;
     }
-    final selectedWallet =
-        totalExpense > 0 ? await _pickWalletForExpense(totalExpense) : null;
-    if (totalExpense > 0 && selectedWallet == _walletSelectionCancelled) {
+    // Hard limit: you can't spend more than the wallet holds.
+    if (totalExpense > 0 &&
+        selectedWallet != null &&
+        totalExpense > selectedWallet.balance + 0.005) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              'الرصيد غير كافٍ في ${selectedWallet.name}. المتاح ${selectedWallet.balance.toStringAsFixed(0)} ج.'),
+        ));
+      }
       _putTextInInput(text);
       _lastSubmittedText = null;
       _lastSubmittedAt = null;
@@ -317,7 +382,7 @@ class _ChatScreenState extends State<ChatScreen> {
         auth.user!,
         text,
         wallet: selectedWallet,
-        team: selectedTeam,
+        team: null,
       );
       await chat.refreshMessages(widget.groupId);
       await context.read<BudgetProvider>().refreshData(widget.groupId);
@@ -348,59 +413,21 @@ class _ChatScreenState extends State<ChatScreen> {
     balance: 0,
   );
 
-  static final TeamModel _teamSelectionCancelled = TeamModel(
-    id: '__cancelled__',
-    groupId: '__cancelled__',
-    name: '__cancelled__',
-    ownerId: '__cancelled__',
-    ownerName: '__cancelled__',
-  );
-
-  Future<TeamModel?> _pickTeamForExpense() async {
-    final auth = context.read<AuthProvider>();
-    final user = auth.user;
-    if (user == null) return null;
-    final teams = await _db.getVisibleTeams(widget.groupId, user);
-    if (teams.isEmpty) return null;
-    if (!mounted) return _teamSelectionCancelled;
-    final selected = await showDialog<TeamModel?>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تسجيل المصروف فين؟'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.home_rounded),
-              title: const Text('مصروف عائلي عام'),
-              subtitle: const Text('يظهر في شات وتقارير العائلة'),
-              onTap: () => Navigator.pop(ctx, null),
-            ),
-            const Divider(height: 1),
-            ...teams.map(
-              (team) => ListTile(
-                leading: const Icon(Icons.groups_2_rounded),
-                title: Text(team.name),
-                subtitle: Text('الرصيد: ${team.balance.toStringAsFixed(0)} ج'),
-                onTap: () => Navigator.pop(ctx, team),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, _teamSelectionCancelled),
-            child: const Text('إلغاء'),
-          ),
-        ],
-      ),
-    );
-    return selected;
-  }
-
   Future<WalletModel?> _pickWalletForExpense(double amount) async {
     final budget = context.read<BudgetProvider>();
-    var wallets = budget.wallets.where((w) => w.balance > 0).toList();
+    final user = context.read<AuthProvider>().user;
+    if (user == null) return null;
+
+    // A member always spends from their own single wallet — no choice.
+    if (!user.isAdmin) {
+      for (final w in budget.wallets) {
+        if (w.isMemberWallet && w.ownerId == user.id) return w;
+      }
+      return null; // not provisioned yet
+    }
+
+    // The admin chooses which of his cash wallets to spend from.
+    var wallets = budget.wallets.where((w) => w.isAdminWallet).toList();
     if (wallets.isEmpty) return null;
     if (wallets.length == 1) return wallets.first;
     wallets = wallets
@@ -441,12 +468,16 @@ class _ChatScreenState extends State<ChatScreen> {
     return selected ?? _walletSelectionCancelled;
   }
 
-  /// Pick a wallet to top up. Unlike expenses, all wallets are eligible.
-  /// Returns the wallet, [_walletSelectionCancelled] on cancel, or null if
-  /// there are no wallets at all.
-  Future<WalletModel?> _pickWalletForInjection({String? hint}) async {
+  /// Pick any wallet (all eligible). Returns the wallet,
+  /// [_walletSelectionCancelled] on cancel, or null if there are no wallets.
+  /// If [hint] matches a wallet name, it is chosen without prompting.
+  Future<WalletModel?> _pickAnyWallet(
+      {required String title, String? hint, bool adminOnly = false}) async {
     final budget = context.read<BudgetProvider>();
-    final wallets = budget.wallets.toList();
+    final wallets = (adminOnly
+            ? budget.wallets.where((w) => w.isAdminWallet)
+            : budget.wallets)
+        .toList();
     if (wallets.isEmpty) return null;
 
     if (hint != null && hint.trim().isNotEmpty) {
@@ -470,7 +501,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final selected = await showDialog<WalletModel>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('تضيف الفلوس في أي محفظة؟'),
+        title: Text(title),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

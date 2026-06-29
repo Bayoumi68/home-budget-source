@@ -339,6 +339,98 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     );
   }
 
+  /// Admin funds (or withdraws from) a member's wallet via a transfer to/from
+  /// one of the admin's cash wallets.
+  Future<void> _showFundDialog(WalletModel memberWallet,
+      {required bool withdraw}) async {
+    final adminWallets =
+        context.read<BudgetProvider>().wallets.where((w) => w.isAdminWallet).toList();
+    if (adminWallets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أضف محفظة نقدية لك أولًا.')),
+      );
+      return;
+    }
+    var source = adminWallets.first;
+    final amountController = TextEditingController();
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: Text(withdraw
+              ? 'سحب من ${memberWallet.name}'
+              : 'تمويل ${memberWallet.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<WalletModel>(
+                initialValue: source,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: withdraw ? 'إلى محفظتي' : 'من محفظتي',
+                  border: const OutlineInputBorder(),
+                ),
+                items: adminWallets
+                    .map((w) => DropdownMenuItem(
+                          value: w,
+                          child: Text(
+                              '${w.name} (${w.balance.toStringAsFixed(0)} ج)'),
+                        ))
+                    .toList(),
+                onChanged: (v) => setDialog(() => source = v ?? source),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                textDirection: ui.TextDirection.ltr,
+                decoration: const InputDecoration(
+                  labelText: 'المبلغ',
+                  hintText: 'المبلغ بالجنيه',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, {
+                'source': source,
+                'amount': double.tryParse(
+                    amountController.text.trim().replaceAll(',', '.')),
+              }),
+              child: Text(withdraw ? 'سحب' : 'تمويل'),
+            ),
+          ],
+        ),
+      ),
+    );
+    amountController.dispose();
+    if (result == null || !mounted) return;
+    final amount = result['amount'] as double?;
+    final src = result['source'] as WalletModel;
+    if (amount == null || amount <= 0) return;
+    final user = context.read<AuthProvider>().user;
+    final error = await context.read<BudgetProvider>().transfer(
+          widget.groupId,
+          fromWalletId: withdraw ? memberWallet.id : src.id,
+          toWalletId: withdraw ? src.id : memberWallet.id,
+          amount: amount,
+          byName: user?.name,
+          byPhone: user?.phone,
+        );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(error ??
+          (withdraw
+              ? 'تم سحب ${amount.toStringAsFixed(0)} ج من ${memberWallet.name}'
+              : 'تم تمويل ${memberWallet.name} بـ ${amount.toStringAsFixed(0)} ج')),
+    ));
+  }
+
   Future<void> _showAddCategoryDialog() async {
     final nameController = TextEditingController();
     final limitController = TextEditingController();
@@ -611,7 +703,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          _buildWalletsSection(context, budget),
+          _buildWalletsSection(context, auth, budget),
           const SizedBox(height: 16),
           Row(
             children: [
@@ -742,9 +834,78 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     );
   }
 
-  // ─── Wallets section (collapsible parent table + per-wallet ledgers) ───
-  Widget _buildWalletsSection(BuildContext context, BudgetProvider budget) {
-    final wallets = budget.wallets;
+  // ─── Wallets section (role-aware: admin manages cash + funds members) ───
+  Widget _buildWalletsSection(
+      BuildContext context, AuthProvider auth, BudgetProvider budget) {
+    final user = auth.user;
+    final isAdmin = user?.isAdmin == true;
+
+    // A member sees only their own wallet + its ledger (read-only).
+    if (!isAdmin) {
+      final mine = budget.wallets
+          .where((w) => w.isMemberWallet && w.ownerId == user?.id)
+          .toList();
+      return Card(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const ListTile(
+              leading: Icon(Icons.account_balance_wallet_rounded,
+                  color: AppTheme.incomeGreen),
+              title: Text('محفظتي'),
+              subtitle: Text('رصيدك وحركتك — يموّلها قائد العائلة.'),
+            ),
+            const Divider(height: 1),
+            if (mine.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: Text('جاري تجهيز محفظتك...'),
+              )
+            else
+              ...mine.map((w) => _walletLedgerTile(context, budget, w)),
+          ],
+        ),
+      );
+    }
+
+    final adminWallets = budget.wallets.where((w) => w.isAdminWallet).toList();
+    final memberWallets = budget.wallets.where((w) => w.isMemberWallet).toList();
+    return Column(
+      children: [
+        _walletsGroupCard(
+          context,
+          budget,
+          title: 'محافظي (مصادر النقد)',
+          subtitle: 'كاش/بنك — منها تموّل الأعضاء وتصرف.',
+          wallets: adminWallets,
+          onAdd: budget.loading ? null : _showAddWalletDialog,
+          showManage: true,
+        ),
+        const SizedBox(height: 16),
+        _walletsGroupCard(
+          context,
+          budget,
+          title: 'محافظ الأعضاء',
+          subtitle: 'محفظة واحدة لكل عضو — موّل أو اسحب.',
+          wallets: memberWallets,
+          showFunding: true,
+          emptyText: 'لا يوجد أعضاء بعد. أضف أفراد العائلة من شاشة الأعضاء.',
+        ),
+      ],
+    );
+  }
+
+  Widget _walletsGroupCard(
+    BuildContext context,
+    BudgetProvider budget, {
+    required String title,
+    required String subtitle,
+    required List<WalletModel> wallets,
+    VoidCallback? onAdd,
+    bool showManage = false,
+    bool showFunding = false,
+    String emptyText = 'لا توجد محافظ بعد.',
+  }) {
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -752,30 +913,24 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           ListTile(
             leading: const Icon(Icons.account_balance_wallet_rounded,
                 color: AppTheme.incomeGreen),
-            title: const Text('المحافظ'),
-            subtitle:
-                const Text('كاش، بنك، أي محفظة — مع سجل حركة (مدين/دائن) لكل واحدة.'),
-            trailing: IconButton(
-              tooltip: 'إضافة محفظة',
-              onPressed: budget.loading ? null : _showAddWalletDialog,
-              icon: const Icon(Icons.add_rounded),
-            ),
+            title: Text(title),
+            subtitle: Text(subtitle),
+            trailing: onAdd == null
+                ? null
+                : IconButton(
+                    tooltip: 'إضافة محفظة',
+                    onPressed: onAdd,
+                    icon: const Icon(Icons.add_rounded),
+                  ),
           ),
           const Divider(height: 1),
           if (wallets.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: Text('جاري تجهيز الحساب المنزلي الأساسي...'),
-            )
+            Padding(padding: const EdgeInsets.all(12), child: Text(emptyText))
           else ...[
             _walletsOverviewTable(wallets),
             const Divider(height: 1),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Text('حركة كل محفظة',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            ...wallets.map((w) => _walletLedgerTile(context, budget, w)),
+            ...wallets.map((w) => _walletLedgerTile(context, budget, w,
+                showManage: showManage, showFunding: showFunding)),
           ],
         ],
       ),
@@ -827,14 +982,18 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   }
 
   Widget _walletLedgerTile(
-      BuildContext context, BudgetProvider budget, WalletModel w) {
+      BuildContext context, BudgetProvider budget, WalletModel w,
+      {bool showManage = false, bool showFunding = false}) {
     final fmt = NumberFormat('#,##0');
+    final hasButtons = showManage || showFunding;
     return ExpansionTile(
       key: PageStorageKey('wallet_${w.id}'),
       leading: Icon(
-        w.isDefault
-            ? Icons.account_balance_wallet_rounded
-            : Icons.wallet_rounded,
+        w.isMemberWallet
+            ? Icons.person_rounded
+            : (w.isDefault
+                ? Icons.account_balance_wallet_rounded
+                : Icons.wallet_rounded),
         color: AppTheme.gold,
       ),
       title: Text(w.name),
@@ -842,32 +1001,57 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           'الرصيد: ${fmt.format(w.balance)} ج${w.description.isEmpty ? '' : ' — ${w.description}'}'),
       childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          children: [
-            OutlinedButton.icon(
-              onPressed: budget.loading ? null : () => _showEditWalletDialog(w),
-              icon: const Icon(Icons.edit_rounded, size: 18),
-              label: const Text('تعديل'),
-            ),
-            OutlinedButton.icon(
-              onPressed: budget.loading ? null : () => _showSetBalanceDialog(w),
-              icon: const Icon(Icons.tune_rounded, size: 18),
-              label: const Text('تحديد الرصيد'),
-            ),
-            OutlinedButton.icon(
-              onPressed: (budget.loading || w.isDefault)
-                  ? null
-                  : () => _confirmDeleteWallet(w),
-              icon: const Icon(Icons.delete_outline_rounded, size: 18),
-              label: const Text('حذف'),
-              style:
-                  OutlinedButton.styleFrom(foregroundColor: AppTheme.expenseRed),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
+        if (hasButtons)
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              if (showManage) ...[
+                OutlinedButton.icon(
+                  onPressed:
+                      budget.loading ? null : () => _showEditWalletDialog(w),
+                  icon: const Icon(Icons.edit_rounded, size: 18),
+                  label: const Text('تعديل'),
+                ),
+                OutlinedButton.icon(
+                  onPressed:
+                      budget.loading ? null : () => _showSetBalanceDialog(w),
+                  icon: const Icon(Icons.tune_rounded, size: 18),
+                  label: const Text('تحديد الرصيد'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: (budget.loading || w.isDefault)
+                      ? null
+                      : () => _confirmDeleteWallet(w),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                  label: const Text('حذف'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.expenseRed),
+                ),
+              ],
+              if (showFunding) ...[
+                OutlinedButton.icon(
+                  onPressed: budget.loading
+                      ? null
+                      : () => _showFundDialog(w, withdraw: false),
+                  icon: const Icon(Icons.add_card_rounded, size: 18),
+                  label: const Text('تمويل'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.incomeGreen),
+                ),
+                OutlinedButton.icon(
+                  onPressed: budget.loading
+                      ? null
+                      : () => _showFundDialog(w, withdraw: true),
+                  icon: const Icon(Icons.output_rounded, size: 18),
+                  label: const Text('سحب'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.expenseRed),
+                ),
+              ],
+            ],
+          ),
+        if (hasButtons) const SizedBox(height: 8),
         FutureBuilder<List<WalletEntryModel>>(
           future: _db.getWalletEntriesSync(widget.groupId, w.id),
           builder: (ctx, snap) {
@@ -941,6 +1125,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         return 'تعديل رصيد';
       case 'reversal':
         return 'إرجاع';
+      case 'transfer':
+        return 'تحويل';
       default:
         return e.source;
     }

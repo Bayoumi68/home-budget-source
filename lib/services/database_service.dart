@@ -958,6 +958,76 @@ class DatabaseService {
     return wallets;
   }
 
+  /// Ensure every non-admin member owns exactly one wallet. Idempotent.
+  Future<void> provisionMemberWallets(String groupId) async {
+    final members = await getMembersSync(groupId);
+    final snap = await _wallets(groupId).get();
+    final ownerIds = <String>{};
+    for (final d in snap.docs) {
+      final data = d.data();
+      if ((data['ownerType'] ?? '') == 'member') {
+        final oid = (data['ownerId'] ?? '').toString();
+        if (oid.isNotEmpty) ownerIds.add(oid);
+      }
+    }
+    final now = DateTime.now().toIso8601String();
+    for (final m in members) {
+      if (m.isAdmin || m.id.isEmpty || ownerIds.contains(m.id)) continue;
+      final id = 'mem_${_docSafeId(m.id)}';
+      await _wallets(groupId).doc(id).set({
+        'id': id,
+        'name': m.name.isEmpty ? 'محفظة عضو' : m.name,
+        'description': 'محفظة ${m.name}',
+        'balance': 0,
+        'isDefault': false,
+        'archived': false,
+        'ownerType': 'member',
+        'ownerId': m.id,
+        'ledgerStarted': false,
+        'createdAt': now,
+        'updatedAt': now,
+      }, SetOptions(merge: true));
+    }
+  }
+
+  /// Move [amount] between two wallets (admin funding/withdrawal): CR the
+  /// source, DR the destination. Returns an Arabic error, or null on success.
+  Future<String?> transferBetweenWallets(
+    String groupId, {
+    required String fromWalletId,
+    required String toWalletId,
+    required double amount,
+    String? byName,
+    String? byPhone,
+  }) async {
+    if (amount <= 0) return 'المبلغ غير صحيح.';
+    if (fromWalletId == toWalletId) return 'لا يمكن التحويل لنفس المحفظة.';
+    final fromSnap = await _wallets(groupId).doc(fromWalletId).get();
+    final toSnap = await _wallets(groupId).doc(toWalletId).get();
+    if (!fromSnap.exists || !toSnap.exists) return 'المحفظة غير موجودة.';
+    final fromBal = (fromSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+    final fromName = (fromSnap.data()?['name'] ?? 'المحفظة').toString();
+    final toName = (toSnap.data()?['name'] ?? 'المحفظة').toString();
+    if (amount > fromBal + 0.005) {
+      return 'الرصيد غير كافٍ في $fromName.';
+    }
+    await postWalletEntry(groupId, fromWalletId,
+        direction: 'CR',
+        amount: amount,
+        source: 'transfer',
+        note: 'تحويل إلى $toName',
+        byName: byName,
+        byPhone: byPhone);
+    await postWalletEntry(groupId, toWalletId,
+        direction: 'DR',
+        amount: amount,
+        source: 'transfer',
+        note: 'تحويل من $fromName',
+        byName: byName,
+        byPhone: byPhone);
+    return null;
+  }
+
   /// Create a wallet. If [balance] is non-zero it is recorded as an opening
   /// ledger entry so the child table reconciles from day one.
   Future<void> addWallet(
@@ -965,6 +1035,8 @@ class DatabaseService {
     String name, {
     String description = '',
     double balance = 0,
+    String ownerType = 'admin',
+    String? ownerId,
     String? byName,
     String? byPhone,
   }) async {
@@ -978,6 +1050,8 @@ class DatabaseService {
       'balance': 0,
       'isDefault': false,
       'archived': false,
+      'ownerType': ownerType,
+      'ownerId': ownerId,
       'ledgerStarted': false,
       'createdAt': now,
       'updatedAt': now,

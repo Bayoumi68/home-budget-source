@@ -404,6 +404,47 @@ class AIService {
     };
   }
 
+  // Read-only wallet questions. Normalization maps ة→ه, ى→ي.
+  static const _walletBalanceKeywords = [
+    'رصيد المحفظه',
+    'رصيد محفظتي',
+    'رصيد محفظه',
+    'كام في المحفظه',
+    'فلوس المحفظه',
+    'كام فلوس المحفظه',
+  ];
+
+  static const _walletMovementKeywords = [
+    'حركه المحفظه',
+    'حركه محفظه',
+    'كشف حساب المحفظه',
+    'كشف المحفظه',
+    'كشف حساب محفظه',
+    'تقرير المحفظه',
+    'تقرير محفظه',
+    'سجل المحفظه',
+  ];
+
+  /// Detects "wallet balance" / "wallet movement" questions and returns
+  /// `{type: 'balance'|'movement', walletHint}`, or null. No amount required.
+  static Map<String, dynamic>? parseWalletQuery(String text) {
+    final original = text.trim();
+    if (original.isEmpty) return null;
+    final normalized = _normalize(original);
+    String? type;
+    if (_walletMovementKeywords.any(normalized.contains)) {
+      type = 'movement';
+    } else if (_walletBalanceKeywords.any(normalized.contains)) {
+      type = 'balance';
+    } else {
+      return null;
+    }
+    String? walletHint;
+    final m = RegExp(r'محفظه\s+([؀-ۿ]+)').firstMatch(normalized);
+    if (m != null) walletHint = m.group(1)?.trim();
+    return {'type': type, 'walletHint': walletHint};
+  }
+
   static bool isNextReportCommand(String text) {
     final normalized = _normalize(text);
     return normalized == 'التالي' ||

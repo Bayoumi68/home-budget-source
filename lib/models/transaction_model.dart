@@ -13,6 +13,8 @@ class TransactionModel {
   final String? walletName;
   final String? teamId;
   final String? teamName;
+  // True when the expense exceeded the member's monthly cap (soft red flag).
+  final bool overCap;
 
   TransactionModel({
     required this.id,
@@ -29,6 +31,7 @@ class TransactionModel {
     this.walletName,
     this.teamId,
     this.teamName,
+    this.overCap = false,
   }) : date = date ?? DateTime.now();
 
   bool get isTeamExpense => teamId != null && teamId!.isNotEmpty;
@@ -48,6 +51,7 @@ class TransactionModel {
         'walletName': walletName,
         'teamId': teamId,
         'teamName': teamName,
+        'overCap': overCap,
       };
 
   factory TransactionModel.fromMap(Map<String, dynamic> map) =>
@@ -66,5 +70,6 @@ class TransactionModel {
         walletName: map['walletName'],
         teamId: map['teamId'],
         teamName: map['teamName'],
+        overCap: map['overCap'] == true,
       );
 }
