@@ -4,21 +4,50 @@ A client-side Flutter app over Firebase. Code in `lib/` is organized in three la
 
 ## Layers
 
-- **screens/** — UI. Key screens: splash, auth, chat (the main logging surface), analytics,
-  members, teams, team_member_home, group_settings, notifications.
+- **screens/** — UI. Key screens: splash, auth, chat (the main logging surface), analytics
+  (reports), members, member_detail (admin's per-member view), teams, group_settings,
+  notifications.
 - **providers/** — app state via `ChangeNotifier`: auth, budget, chat, notification, theme.
 - **services/** — integrations and logic: `auth_service` (Firebase Auth), `database_service`
   (Firestore reads/writes), `ai_service` (offline Arabic parser), `voice_service`
   (speech-to-text input), `local_notice_service` (with `_web` / `_stub` variants).
 
+## Money model (the core domain)
+
+Two independent axes — **people** and **accounts**:
+
+- **People** = family members (each logs in). One is the **admin** (family leader).
+- **Accounts = wallets** (cash containers). Ownership: the **admin owns one or more cash
+  wallets** (كاش/بنك); **each member owns exactly one wallet** (their pocket,
+  auto-provisioned). A wallet has a balance and a **DR/CR ledger** (sub-collection `entries`)
+  where DR = money in, CR = money out, and each row stores the accumulated `balanceAfter`.
+- **Flows:** the admin **funds/withdraws** member wallets by transferring to/from a cash
+  wallet (paired CR+DR ledger postings). A **member spends only from their own wallet**, hard-
+  limited by its balance. A member's **monthly cap** is a *soft red flag* (over-cap expenses
+  still post, marked red), not a block.
+- **Roles in the UI:** a member sees only their own wallet, own chat entries, and own reports;
+  the admin sees everyone. Teams are member groupings whose rollup = the sum of their members'
+  wallet balances.
+
 ## Data model (Firestore)
 
 - `families/{groupId}` with subcollections: `members`, `messages`, `transactions`, `budgets`,
-  `categories`, `learnedKeywords`, `wallets`, `teams`, `notifications`.
+  `categories`, `learnedKeywords`, `wallets` (+ each wallet's `entries` ledger), `teams`,
+  `notifications`.
+- A wallet doc carries `ownerType` (`admin`|`member`), `ownerId`, `description`, `balance`,
+  `updatedBy*`, `archived`. A transaction/message carries `overCap`; a message also carries
+  `targetUserId` (admin→member direct messages); a notification carries `targetUserIds`.
 - Top-level: `inviteCodes`, `familyNames` (family-name uniqueness lock), `diagnostics`.
 - Collection-group queries (`members.phone`, `members.authUid`, `teams.memberIds`) back join
   and session-restore; their indexes live in `firestore.indexes.json`, access rules in
   `firestore.rules`.
+
+## Reports (`analytics_screen`)
+
+Period picker (today/week/month/3mo/all/custom) + a member filter (admin). Collapsible
+sections: summary (expenses/balance/income/net), by-category (pie+list), by-member balances,
+by-wallet, over-time trend, budgets-vs-actual — all scoped to the viewer (members see only
+their own).
 
 ## Offline Arabic parser (`ai_service.dart`)
 

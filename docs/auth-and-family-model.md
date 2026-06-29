@@ -11,14 +11,26 @@
 The family admin assigns a phone to each member; on join the member types their phone and it
 must match the one carried by the invite. No SMS/OTP is involved.
 
-## Family model
+## Roles: admin vs member
+
+- The **admin** (family leader) funds members, manages cash wallets, sees the whole family,
+  and reaches Settings/Teams. Tapping a member opens the **per-member screen** (their wallet +
+  fund/withdraw + a direct message box).
+- A **member** logs spending from their own wallet and sees **only their own** wallet, chat
+  entries, reports, and notifications. They have no Teams, can't open family Settings (the chat
+  header opens their own wallet instead), and can't add wallets or fund anyone.
+
+## Family lifecycle
 
 - A family **name is globally unique**, enforced by a lock document `familyNames/{nameKey}`.
 - **Create family** (`DatabaseService.createFamily`): unique name + phone; the creator becomes
   admin.
 - **Join family** (`joinFamily`): an invite link carries `{groupId, assigned phone}`
-  (`install.html?join=1&groupId=…&phone=…`). The member signs in with their own credentials,
-  types their phone, and joins only if it matches.
+  (`install.html?join=1&groupId=…&phone=…`). The member signs in, types their phone, and joins
+  only if it matches. Joining is **one-time**.
+- **Returning login:** after sign-in the auth screen lists the account's existing memberships
+  and shows an **enter** button per family (with the role) — returning members/admins log in,
+  they do not re-join. Re-join only appears for a brand-new member with no membership.
 - **Session restore** keys off the login UID via the `members.authUid` collection-group index.
   `restoreSession` calls `waitForAuthReady()` first, because Firebase restores `currentUser`
   asynchronously on cold start.

@@ -16,9 +16,12 @@ import '../providers/budget_provider.dart';
 import '../providers/notification_provider.dart';
 import '../models/chat_message_model.dart';
 import '../models/wallet_model.dart';
+import '../models/user_model.dart';
 import '../services/voice_service.dart';
 import '../services/ai_service.dart';
+import '../services/database_service.dart';
 import '../services/local_notice_service.dart';
+import 'member_detail_screen.dart';
 import '../utils/category_utils.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
@@ -46,7 +49,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   final _textController = TextEditingController();
   final _voiceService = VoiceService();
+  final _db = DatabaseService();
   final _localNotice = const LocalNoticeService();
+  List<UserModel> _members = [];
   final _appLinks = AppLinks();
   bool _isRecording = false;
   bool _isSending = false;
@@ -75,10 +80,17 @@ class _ChatScreenState extends State<ChatScreen> {
       final userId = auth.user?.id;
       if (userId != null) {
         final notifications = context.read<NotificationProvider>();
-        notifications.subscribe(widget.groupId, userId);
+        notifications.subscribe(widget.groupId, userId,
+            isAdmin: auth.user?.isAdmin == true);
         _notificationProvider = notifications;
         notifications.addListener(_handleLiveNotification);
         await _localNotice.requestPermission();
+      }
+      if (auth.user?.isAdmin == true) {
+        try {
+          final members = await _db.getMembersSync(widget.groupId);
+          if (mounted) setState(() => _members = members);
+        } catch (_) {}
       }
       await _refreshFamilyData();
       _familyRefreshTimer?.cancel();
@@ -372,6 +384,24 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    // Admin plain-text routing: detect a member's name → direct message;
+    // otherwise ask (all / a member). Expenses and reports are not routed.
+    String? directTargetUserId;
+    if (totalExpense == 0 &&
+        auth.user!.isAdmin &&
+        AIService.parseReportRequest(text) == null &&
+        !AIService.isNextReportCommand(text)) {
+      final routed = await _routeAdminMessage(text);
+      if (routed == null) {
+        _putTextInInput(text);
+        _lastSubmittedText = null;
+        _lastSubmittedAt = null;
+        if (mounted) setState(() => _isSending = false);
+        return;
+      }
+      directTargetUserId = routed.isEmpty ? null : routed;
+    }
+
     _textController.clear();
     setState(() {
       _lastParsedPreview = null;
@@ -385,6 +415,7 @@ class _ChatScreenState extends State<ChatScreen> {
         text,
         wallet: selectedWallet,
         team: null,
+        targetUserId: directTargetUserId,
       );
       await chat.refreshMessages(widget.groupId);
       await context.read<BudgetProvider>().refreshData(widget.groupId);
@@ -414,6 +445,36 @@ class _ChatScreenState extends State<ChatScreen> {
     name: '__cancelled__',
     balance: 0,
   );
+
+  /// Routes an admin's plain-text message. Returns: null = cancelled,
+  /// '' = send to everyone, or a member id = a direct message to that member.
+  Future<String?> _routeAdminMessage(String text) async {
+    final members = _members.where((m) => !m.isAdmin).toList();
+    if (members.isEmpty) return '';
+    final norm = CategoryUtils.key(text);
+    final matches = members.where((m) {
+      final nk = CategoryUtils.key(m.name);
+      return nk.length >= 2 && norm.contains(nk);
+    }).toList();
+    if (matches.length == 1) return matches.first.id;
+    if (!mounted) return '';
+    return showDialog<String?>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('إرسال الرسالة إلى؟'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, ''),
+            child: const Text('كل العائلة'),
+          ),
+          ...members.map((m) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(ctx, m.id),
+                child: Text(m.name),
+              )),
+        ],
+      ),
+    );
+  }
 
   Future<WalletModel?> _pickWalletForExpense(double amount) async {
     final budget = context.read<BudgetProvider>();
@@ -1047,11 +1108,22 @@ class _ChatScreenState extends State<ChatScreen> {
     final notifications = context.watch<NotificationProvider>();
     final user = auth.user;
     // Admin sees the family total; a member sees only their own wallet.
-    final visibleBalance = (user == null || user.isAdmin)
+    final isMemberView = user != null && !user.isAdmin;
+    final visibleBalance = !isMemberView
         ? budget.balance
         : budget.wallets
             .where((w) => w.isMemberWallet && w.ownerId == user.id)
             .fold<double>(0, (s, w) => s + w.balance);
+    final nowMonth = DateTime.now();
+    final visibleExpenses = !isMemberView
+        ? budget.totalExpenses
+        : budget.transactions
+            .where((t) =>
+                t.isExpense &&
+                t.userId == user.id &&
+                t.date.year == nowMonth.year &&
+                t.date.month == nowMonth.month)
+            .fold<double>(0, (s, t) => s + t.amount);
     // Admin sees the whole feed; a member sees only their own + messages to them.
     final visibleMessages = (user == null || user.isAdmin)
         ? chat.messages
@@ -1074,11 +1146,26 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         title: GestureDetector(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (_) => GroupSettingsScreen(groupId: widget.groupId)),
-          ),
+          onTap: () {
+            if (user == null) return;
+            if (user.isAdmin) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) =>
+                        GroupSettingsScreen(groupId: widget.groupId)),
+              );
+            } else {
+              // Members open their own wallet, not the family settings.
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => MemberDetailScreen(
+                      groupId: widget.groupId, member: user, selfView: true),
+                ),
+              );
+            }
+          },
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1217,17 +1304,13 @@ class _ChatScreenState extends State<ChatScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _SummaryItem(
-                    label: 'المصروفات',
-                    amount: budget.totalExpenses,
+                    label: isMemberView ? 'مصروفاتي' : 'مصروفات العائلة',
+                    amount: visibleExpenses,
                     color: AppTheme.expenseRed),
                 _SummaryItem(
-                    label: 'المحافظ',
-                    amount: budget.balance,
+                    label: isMemberView ? 'رصيدي' : 'رصيد المحافظ',
+                    amount: visibleBalance,
                     color: AppTheme.incomeGreen),
-                _SummaryItem(
-                    label: 'المتاح',
-                    amount: budget.balance,
-                    color: AppTheme.gold),
               ],
             ),
           ),

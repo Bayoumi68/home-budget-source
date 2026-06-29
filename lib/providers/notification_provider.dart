@@ -8,16 +8,25 @@ class NotificationProvider extends ChangeNotifier {
   List<FamilyNotificationModel> _items = [];
   StreamSubscription<List<FamilyNotificationModel>>? _sub;
   String? _currentUserId;
+  bool _isAdmin = false;
 
   List<FamilyNotificationModel> get items => _items;
-  List<FamilyNotificationModel> get visibleItems => _currentUserId == null
-      ? _items
-      : _items.where((n) => n.isVisibleFor(_currentUserId!)).toList();
-  int get unreadCount => _items
-      .where((n) => _currentUserId == null
-          ? !n.read
-          : n.isVisibleFor(_currentUserId!) && !n.isReadFor(_currentUserId!))
-      .length;
+
+  /// Admin sees every family notification. A member sees only notifications
+  /// about their own activity (actor) or ones explicitly targeted to them.
+  List<FamilyNotificationModel> get visibleItems {
+    final uid = _currentUserId;
+    if (uid == null || _isAdmin) return _items;
+    return _items
+        .where((n) => n.actorId == uid || n.targetUserIds.contains(uid))
+        .toList();
+  }
+
+  int get unreadCount {
+    final uid = _currentUserId;
+    if (uid == null) return _items.where((n) => !n.read).length;
+    return visibleItems.where((n) => !n.isReadFor(uid)).length;
+  }
 
   FamilyNotificationModel? latestUnreadFromOther(String? userId) {
     if (userId == null) return null;
@@ -32,8 +41,9 @@ class NotificationProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void subscribe(String groupId, String userId) {
+  void subscribe(String groupId, String userId, {bool isAdmin = false}) {
     _currentUserId = userId;
+    _isAdmin = isAdmin;
     _sub?.cancel();
     _sub = _db.watchNotifications(groupId).listen((items) {
       _items = items;

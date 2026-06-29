@@ -15,8 +15,13 @@ import '../services/database_service.dart';
 class MemberDetailScreen extends StatefulWidget {
   final String groupId;
   final UserModel member;
+  // selfView = a member looking at their own wallet (read-only, no admin tools).
+  final bool selfView;
   const MemberDetailScreen(
-      {super.key, required this.groupId, required this.member});
+      {super.key,
+      required this.groupId,
+      required this.member,
+      this.selfView = false});
 
   @override
   State<MemberDetailScreen> createState() => _MemberDetailScreenState();
@@ -195,7 +200,8 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
   Widget build(BuildContext context) {
     final w = _wallet;
     return Scaffold(
-      appBar: AppBar(title: Text(widget.member.name)),
+      appBar: AppBar(
+          title: Text(widget.selfView ? 'محفظتي' : widget.member.name)),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -233,30 +239,33 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                                     color: AppTheme.incomeGreen)),
                           ],
                         ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed:
-                                    _busy ? null : () => _fund(withdraw: false),
-                                icon: const Icon(Icons.add_card_rounded),
-                                label: const Text('تمويل'),
+                        if (!widget.selfView) ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: FilledButton.icon(
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _fund(withdraw: false),
+                                  icon: const Icon(Icons.add_card_rounded),
+                                  label: const Text('تمويل'),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed:
-                                    _busy ? null : () => _fund(withdraw: true),
-                                icon: const Icon(Icons.output_rounded),
-                                label: const Text('سحب'),
-                                style: OutlinedButton.styleFrom(
-                                    foregroundColor: AppTheme.expenseRed),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed:
+                                      _busy ? null : () => _fund(withdraw: true),
+                                  icon: const Icon(Icons.output_rounded),
+                                  label: const Text('سحب'),
+                                  style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppTheme.expenseRed),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -267,30 +276,32 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                         TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 _ledger(),
-                const SizedBox(height: 16),
-                const Text('رسالة للعضو',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _msgController,
-                        textDirection: ui.TextDirection.rtl,
-                        decoration: const InputDecoration(
-                          hintText: 'اكتب رسالة تظهر في شات العضو...',
-                          border: OutlineInputBorder(),
+                if (!widget.selfView) ...[
+                  const SizedBox(height: 16),
+                  const Text('رسالة للعضو',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _msgController,
+                          textDirection: ui.TextDirection.rtl,
+                          decoration: const InputDecoration(
+                            hintText: 'اكتب رسالة تظهر في شات العضو...',
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton.filled(
-                      onPressed: _busy ? null : _sendMessage,
-                      icon: const Icon(Icons.send_rounded),
-                    ),
-                  ],
-                ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        onPressed: _busy ? null : _sendMessage,
+                        icon: const Icon(Icons.send_rounded),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
     );

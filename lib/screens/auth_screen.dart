@@ -33,6 +33,7 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _busy = false;
   bool _emailCreateMode = false; // false = sign in, true = create account
   bool _creatingFamily = false; // reveals the create-family form
+  Future<List<FamilyMembership>>? _membershipsFuture;
 
   // Join-invite params (set from a deep link / URL).
   String? _inviteGroupId;
@@ -256,15 +257,96 @@ class _AuthScreenState extends State<AuthScreen> {
                 const SizedBox(height: 24),
                 if (!auth.isAuthenticated)
                   _loginCard()
-                else if (_isJoin)
-                  _joinCard(auth)
                 else
-                  _homeChoiceCard(auth),
+                  _authedBody(auth),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// After sign-in: if the account already belongs to families, show a clear
+  /// "enter" card (login as admin/member). Re-joining is only for brand-new
+  /// members with no membership yet.
+  Widget _authedBody(AuthProvider auth) {
+    _membershipsFuture ??= auth.myMemberships();
+    return FutureBuilder<List<FamilyMembership>>(
+      future: _membershipsFuture,
+      builder: (ctx, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.all(20),
+            child: CircularProgressIndicator(color: Colors.white),
+          );
+        }
+        final memberships = snap.data ?? const <FamilyMembership>[];
+        if (memberships.isNotEmpty && !_creatingFamily) {
+          return _enterCard(auth, memberships);
+        }
+        if (_isJoin && memberships.isEmpty) return _joinCard(auth);
+        return _homeChoiceCard(auth);
+      },
+    );
+  }
+
+  Widget _enterCard(AuthProvider auth, List<FamilyMembership> memberships) {
+    return Column(
+      children: [
+        const Text('مرحبًا! اختر للدخول',
+            style: TextStyle(color: Colors.white70, fontSize: 15)),
+        const SizedBox(height: 14),
+        ...memberships.map((m) {
+          final role = m.member.isAdmin ? 'قائد العائلة' : 'عضو';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: SizedBox(
+              width: double.infinity,
+              height: 58,
+              child: ElevatedButton(
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        await auth.openMembership(m);
+                        _goToChat();
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppTheme.primaryDark,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Flexible(
+                      child: Text(m.group.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 17, fontWeight: FontWeight.bold)),
+                    ),
+                    Text(role,
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: m.member.isAdmin
+                                ? AppTheme.gold
+                                : AppTheme.primaryGreen)),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
+        const SizedBox(height: 4),
+        TextButton(
+          onPressed:
+              _busy ? null : () => setState(() => _creatingFamily = true),
+          child: const Text('إنشاء عائلة جديدة',
+              style: TextStyle(color: Colors.white)),
+        ),
+        _signedInFooter(auth),
+      ],
     );
   }
 
@@ -457,6 +539,12 @@ class _AuthScreenState extends State<AuthScreen> {
                 ? null
                 : () async {
                     await context.read<AuthProvider>().signOut();
+                    if (mounted) {
+                      setState(() {
+                        _membershipsFuture = null;
+                        _creatingFamily = false;
+                      });
+                    }
                   },
             child: const Text('تسجيل الخروج',
                 style: TextStyle(color: Colors.white70)),

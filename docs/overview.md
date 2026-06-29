@@ -2,8 +2,12 @@
 
 Home Budget is an Arabic-first, chat-driven budgeting app for families. Members log
 spending in everyday Arabic — typed or spoken — and the app turns each message into a
-categorized transaction, then rolls spending up into shared budgets and analytics for the
-whole family.
+categorized transaction, then rolls spending up into budgets and analytics.
+
+The model is **allowance-style**: the family **admin** holds cash wallets and **funds each
+member's wallet**; members **spend only from their own wallet** and see only their own data,
+while the admin funds, withdraws, messages members, and monitors everyone. See
+[Architecture](architecture.md) for the wallet/ledger model.
 
 ## Stack
 

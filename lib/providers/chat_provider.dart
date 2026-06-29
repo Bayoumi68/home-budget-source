@@ -113,6 +113,7 @@ class ChatProvider extends ChangeNotifier {
     String text, {
     WalletModel? wallet,
     TeamModel? team,
+    String? targetUserId,
   }) async {
     if (AIService.isNextReportCommand(text)) {
       final sent = await sendNextReportPage(groupId);
@@ -259,6 +260,7 @@ class ChatProvider extends ChangeNotifier {
       transactionId: transactionId,
       timestamp: DateTime.now(),
       overCap: aiResult?['overCap'] == true,
+      targetUserId: aiResult == null ? targetUserId : null,
     );
     await _db.sendMessage(message);
 
