@@ -1,12 +1,12 @@
 @echo off
 cd /d "%~dp0"
 echo ==============================
-echo Budget Home - تشغيل سريع
+echo Home Budget - تشغيل سريع
 echo ==============================
 echo.
 
 :: 1. إنشاء ملفات Android/iOS
-if not exist android\build.gradle (
+if not exist android\build.gradle.kts (
     echo [1/3] تهيئة المشروع...
     call flutter create --project-name budget_home .
     if errorlevel 1 (
