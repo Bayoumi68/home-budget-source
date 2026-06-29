@@ -30,6 +30,10 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   // when that wallet actually changed.
   final Map<String, Future<List<WalletEntryModel>>> _entryFutures = {};
 
+  // Explicit, deterministic expand/collapse state (no nested ExpansionTiles).
+  final Set<String> _collapsedGroups = {};
+  final Set<String> _expandedWallets = {};
+
   Future<List<WalletEntryModel>> _entriesFor(WalletModel w) {
     final key = '${w.id}|${w.updatedAt?.toIso8601String() ?? ''}|${w.balance}';
     return _entryFutures.putIfAbsent(
@@ -903,72 +907,128 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     bool showManage = false,
     bool showFunding = false,
     String emptyText = 'لا توجد محافظ بعد.',
-    bool initiallyExpanded = true,
   }) {
+    final collapsed = _collapsedGroups.contains(title);
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          key: PageStorageKey('walletgroup_$title'),
-          maintainState: true,
-          initiallyExpanded: initiallyExpanded,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-          leading: const Icon(Icons.account_balance_wallet_rounded,
-              color: AppTheme.incomeGreen),
-          title: Row(
-            children: [
-              Expanded(
-                child: Text(title,
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => setState(() {
+              if (collapsed) {
+                _collapsedGroups.remove(title);
+              } else {
+                _collapsedGroups.add(title);
+              }
+            }),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.account_balance_wallet_rounded,
+                      color: AppTheme.incomeGreen),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
+                        Text(subtitle,
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                  if (onAdd != null)
+                    IconButton(
+                      tooltip: 'إضافة محفظة',
+                      icon: const Icon(Icons.add_rounded),
+                      onPressed: onAdd,
+                    ),
+                  Icon(collapsed
+                      ? Icons.expand_more_rounded
+                      : Icons.expand_less_rounded),
+                ],
               ),
-              if (onAdd != null)
-                IconButton(
-                  tooltip: 'إضافة محفظة',
-                  icon: const Icon(Icons.add_rounded),
-                  onPressed: onAdd,
-                ),
-            ],
+            ),
           ),
-          subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-          children: [
+          if (!collapsed) ...[
+            const Divider(height: 1),
             if (wallets.isEmpty)
               Padding(padding: const EdgeInsets.all(12), child: Text(emptyText))
             else
-              ...wallets.map((w) => _walletLedgerTile(context, budget, w,
+              ...wallets.map((w) => _walletLine(context, budget, w,
                   showManage: showManage, showFunding: showFunding)),
           ],
-        ),
+        ],
       ),
     );
   }
 
-  Widget _walletLedgerTile(
-      BuildContext context, BudgetProvider budget, WalletModel w,
+  Widget _walletLine(BuildContext context, BudgetProvider budget, WalletModel w,
       {bool showManage = false, bool showFunding = false}) {
     final fmt = NumberFormat('#,##0');
     final hasButtons = showManage || showFunding;
-    return ExpansionTile(
-      key: PageStorageKey('wallet_${w.id}'),
-      leading: Icon(
-        w.isMemberWallet
-            ? Icons.person_rounded
-            : (w.isDefault
-                ? Icons.account_balance_wallet_rounded
-                : Icons.wallet_rounded),
-        color: AppTheme.gold,
-      ),
-      title: Text(w.name),
-      subtitle: Text(
-          'الرصيد: ${fmt.format(w.balance)} ج${w.description.isEmpty ? '' : ' — ${w.description}'}'),
-      childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+    final expanded = _expandedWallets.contains(w.id);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (hasButtons)
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: [
+        InkWell(
+          onTap: () => setState(() {
+            if (expanded) {
+              _expandedWallets.remove(w.id);
+            } else {
+              _expandedWallets.add(w.id);
+            }
+          }),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Row(
+              children: [
+                Icon(
+                  w.isMemberWallet
+                      ? Icons.person_rounded
+                      : (w.isDefault
+                          ? Icons.account_balance_wallet_rounded
+                          : Icons.wallet_rounded),
+                  color: AppTheme.gold,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(w.name,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(
+                        'الرصيد: ${fmt.format(w.balance)} ج${w.description.isEmpty ? '' : ' — ${w.description}'}',
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(expanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded),
+              ],
+            ),
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (hasButtons)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
               if (showManage) ...[
                 OutlinedButton.icon(
                   onPressed:
@@ -1069,7 +1129,11 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
               ),
             );
           },
-        ),
+                ),
+              ],
+            ),
+          ),
+        const Divider(height: 1),
       ],
     );
   }
