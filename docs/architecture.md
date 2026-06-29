@@ -26,8 +26,12 @@ Two independent axes — **people** and **accounts**:
   limited by its balance. A member's **monthly cap** is a *soft red flag* (over-cap expenses
   still post, marked red), not a block.
 - **Roles in the UI:** a member sees only their own wallet, own chat entries, and own reports;
-  the admin sees everyone. Teams are member groupings whose rollup = the sum of their members'
-  wallet balances.
+  the admin sees everyone.
+- **Teams have no money pot.** A team is a grouping of family members (its `memberIds` are real
+  members with their own wallets). The team's number is a **rollup = the sum of its members'
+  wallet balances**; a team expense comes from the member's **own wallet**, tagged with
+  `teamId` for reporting. (Adding someone to a team adds them as a family member, so their
+  wallet is auto-provisioned.)
 
 ## Data model (Firestore)
 

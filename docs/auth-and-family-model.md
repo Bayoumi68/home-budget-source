@@ -25,9 +25,13 @@ must match the one carried by the invite. No SMS/OTP is involved.
 - A family **name is globally unique**, enforced by a lock document `familyNames/{nameKey}`.
 - **Create family** (`DatabaseService.createFamily`): unique name + phone; the creator becomes
   admin.
-- **Join family** (`joinFamily`): an invite link carries `{groupId, assigned phone}`
-  (`install.html?join=1&groupId=…&phone=…`). The member signs in, types their phone, and joins
-  only if it matches. Joining is **one-time**.
+- **Invite codes are one-time and consumed.** `createInvite(groupId, teamId?)` mints a fresh
+  single-use code into `inviteCodes/{code}` each time the admin shares a link
+  (`install.html?invite=CODE`). `joinByCode` reads the code from the link, rejects
+  missing/already-used codes, **self-joins** (creates/binds the member, provisions their wallet,
+  adds them to the team for a team code), then marks the code `used`. No pre-registration is
+  required; the joiner just enters their name (phone optional — a matching phone reuses an
+  admin-pre-registered slot and its permissions).
 - **Returning login:** after sign-in the auth screen lists the account's existing memberships
   and shows an **enter** button per family (with the role) — returning members/admins log in,
   they do not re-join. Re-join only appears for a brand-new member with no membership.
