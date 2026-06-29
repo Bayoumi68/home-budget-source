@@ -7,6 +7,7 @@ import '../config/constants.dart';
 import '../models/transaction_model.dart';
 import '../models/user_model.dart';
 import '../models/wallet_model.dart';
+import '../models/wallet_entry_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
@@ -26,11 +27,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   DateTimeRange? _customRange;
   List<UserModel> _members = [];
   String? _memberFilterId; // admin: null = whole family, else a member
+  Map<String, List<WalletEntryModel>> _ledger = {}; // walletId → its entries
 
   @override
   void initState() {
     super.initState();
     _loadMembers();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadLedgers());
   }
 
   Future<void> _loadMembers() async {
@@ -38,6 +41,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       final members = await _db.getMembersSync(widget.groupId);
       if (mounted) setState(() => _members = members);
     } catch (_) {}
+  }
+
+  Future<void> _loadLedgers() async {
+    if (!mounted) return;
+    final wallets = context.read<BudgetProvider>().wallets;
+    final map = <String, List<WalletEntryModel>>{};
+    for (final w in wallets) {
+      try {
+        map[w.id] = await _db.getWalletEntriesSync(widget.groupId, w.id);
+      } catch (_) {}
+    }
+    if (mounted) setState(() => _ledger = map);
+  }
+
+  /// Total funded (money in) for the scoped wallets within the period.
+  /// A member / single-member view counts every DR (their funding); the whole-
+  /// family view counts only external cash in (opening + injection), so internal
+  /// admin→member transfers aren't double-counted.
+  double _funded(List<WalletModel> scopedWallets, bool memberScope) {
+    var total = 0.0;
+    for (final w in scopedWallets) {
+      for (final e in (_ledger[w.id] ?? const <WalletEntryModel>[])) {
+        if (!e.isDebit || !_inPeriod(e.at)) continue;
+        if (memberScope || e.source == 'opening' || e.source == 'injection') {
+          total += e.amount;
+        }
+      }
+    }
+    return total;
   }
 
   DateTime get _start {
@@ -93,9 +125,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final expenses = scopedTxns
         .where((t) => t.isExpense)
         .fold<double>(0, (s, t) => s + t.amount);
-    final income = scopedTxns
-        .where((t) => !t.isExpense)
-        .fold<double>(0, (s, t) => s + t.amount);
+    final memberScope = effectiveUserId != null;
+    final funded = _funded(scopedWallets, memberScope);
     final walletBalance =
         scopedWallets.fold<double>(0, (s, w) => s + w.balance);
 
@@ -106,7 +137,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         children: [
           _topPickers(isAdmin),
           const SizedBox(height: 12),
-          _summaryRow(isAdmin, expenses, income, walletBalance),
+          _summaryRow(isAdmin, funded, expenses, walletBalance),
           const SizedBox(height: 16),
           _collapsible('توزيع المصروفات', _categorySection(scopedTxns)),
           if (isAdmin)
@@ -234,35 +265,27 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   // ─── Summary ───
   Widget _summaryRow(
-      bool isAdmin, double expenses, double income, double balance) {
+      bool isAdmin, double funded, double expenses, double balance) {
     final cards = <Widget>[
       _SummaryCard(
-          title: 'المصروفات',
+          title: 'إجمالي التمويل',
+          amount: funded,
+          color: AppTheme.gold,
+          icon: Icons.trending_up_rounded,
+          money: _money),
+      _SummaryCard(
+          title: isAdmin ? 'المصروفات' : 'مصروفاتي',
           amount: expenses,
           color: AppTheme.expenseRed,
           icon: Icons.trending_down_rounded,
           money: _money),
       _SummaryCard(
-          title: isAdmin ? 'رصيد المحافظ' : 'رصيد محفظتي',
+          title: 'الصافي (الرصيد)',
           amount: balance,
           color: AppTheme.incomeGreen,
           icon: Icons.account_balance_wallet_rounded,
           money: _money),
     ];
-    if (isAdmin) {
-      cards.add(_SummaryCard(
-          title: 'الدخل',
-          amount: income,
-          color: AppTheme.gold,
-          icon: Icons.trending_up_rounded,
-          money: _money));
-      cards.add(_SummaryCard(
-          title: 'الصافي',
-          amount: income - expenses,
-          color: AppTheme.accentTeal,
-          icon: Icons.savings_rounded,
-          money: _money));
-    }
     return Wrap(
       spacing: 12,
       runSpacing: 12,
