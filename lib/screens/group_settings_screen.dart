@@ -1016,6 +1016,14 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     final fmt = NumberFormat('#,##0');
     final hasButtons = showManage || showFunding;
     final expanded = _expandedWallets.contains(w.id);
+    // Spending this month from this wallet, vs its guide limit (red flag only).
+    final spent = budget.transactions
+        .where((t) =>
+            t.isExpense &&
+            t.walletId == w.id &&
+            CategoryUtils.isThisMonth(t.date))
+        .fold<double>(0, (s, t) => s + t.amount);
+    final overLimit = w.limit > 0 && spent > w.limit + 0.005;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1037,7 +1045,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                       : (w.isDefault
                           ? Icons.account_balance_wallet_rounded
                           : Icons.wallet_rounded),
-                  color: AppTheme.gold,
+                  color: overLimit ? AppTheme.expenseRed : AppTheme.gold,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1048,11 +1056,23 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                           style: const TextStyle(fontWeight: FontWeight.w600)),
                       Text(
                         'الرصيد: ${fmt.format(w.balance)} ج'
-                        '${w.limit > 0 ? ' • الحد: ${fmt.format(w.limit)} ج' : ''}'
                         '${w.description.isEmpty ? '' : ' — ${w.description}'}',
                         style:
                             const TextStyle(fontSize: 12, color: Colors.grey),
                       ),
+                      if (w.limit > 0)
+                        Text(
+                          'الحد: ${fmt.format(w.limit)} ج — صرف الشهر ${fmt.format(spent)} ج'
+                          '${overLimit ? ' ⚠ تجاوز الحد' : ''}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                overLimit ? AppTheme.expenseRed : Colors.grey,
+                            fontWeight: overLimit
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                        ),
                     ],
                   ),
                 ),
