@@ -14,6 +14,7 @@ class BudgetProvider extends ChangeNotifier {
   List<WalletModel> _wallets = [];
   List<String> _expenseCategories = AppConstants.expenseCategories;
   bool _loading = false;
+  bool _provisioned = false;
 
   List<BudgetModel> get budgets => _budgets;
   List<TransactionModel> get transactions => _transactions;
@@ -41,9 +42,7 @@ class BudgetProvider extends ChangeNotifier {
   Future<void> loadData(String groupId) async {
     _loading = true;
     notifyListeners();
-    try {
-      await _db.provisionMemberWallets(groupId);
-    } catch (_) {}
+    await _ensureProvisioned(groupId);
     _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
     _budgets = await _db.getBudgetsSync(groupId);
     _transactions = await _db.getTransactionsSync(groupId);
@@ -53,11 +52,33 @@ class BudgetProvider extends ChangeNotifier {
   }
 
   Future<void> refreshData(String groupId) async {
+    await _ensureProvisioned(groupId);
     _transactions = await _db.getTransactionsSync(groupId);
     _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
     _budgets = await _db.getBudgetsSync(groupId);
     _wallets = await _db.getWalletsSync(groupId);
     notifyListeners();
+  }
+
+  /// Make sure every member has their wallet — once per session, plus on demand
+  /// via [reprovisionWallets] when a new member is added.
+  Future<void> _ensureProvisioned(String groupId) async {
+    if (_provisioned) return;
+    _provisioned = true;
+    try {
+      await _db.provisionMemberWallets(groupId);
+    } catch (_) {
+      _provisioned = false; // let a later refresh retry
+    }
+  }
+
+  /// Force member-wallet provisioning (e.g. right after adding a member).
+  Future<void> reprovisionWallets(String groupId) async {
+    try {
+      await _db.provisionMemberWallets(groupId);
+      _wallets = await _db.getWalletsSync(groupId);
+      notifyListeners();
+    } catch (_) {}
   }
 
   Map<String, double> get categoryTotals {

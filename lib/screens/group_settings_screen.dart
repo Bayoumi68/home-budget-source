@@ -45,6 +45,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+      // Ensure every member has a wallet so the admin can fund them here.
+      await _db.provisionMemberWallets(widget.groupId);
       await context.read<BudgetProvider>().refreshData(widget.groupId);
       await _db.recalculateBudgetsForCurrentMonth(widget.groupId);
       if (mounted) {
