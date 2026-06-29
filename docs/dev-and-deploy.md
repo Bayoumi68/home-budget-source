@@ -2,9 +2,17 @@
 
 ## Firebase project
 
-`budget-home-bayoumi` (project number 229990261595). The web build is hosted at
-https://budget-home-bayoumi.web.app. Linked via `flutterfire configure`, which regenerates
-`lib/firebase_options.dart` and `android/app/google-services.json`.
+`budget-home-bayoumi` (project number 229990261595, **unrenameable**). Two Hosting sites serve
+the same `build/web` (see the array in `firebase.json`):
+- **https://home-budgets.web.app** — the **primary** (invite/download links + web `authDomain`).
+- https://budget-home-bayoumi.web.app — the original, still live.
+
+The clean names `budget-home`/`home-budget` are reserved by other projects. Web `authDomain` is
+`home-budgets.web.app` (same-origin → clean Google web sign-in); the Google Cloud OAuth web
+client authorizes that origin + `…/__/auth/handler`. Linked via `flutterfire configure` (which
+resets `authDomain` to firebaseapp.com — re-apply). The **release APK** is signed with
+`android/app/release-keystore.jks` (password in `android/key.properties`, both gitignored — back
+them up).
 
 ## Repositories
 
