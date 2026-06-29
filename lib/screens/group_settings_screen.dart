@@ -840,31 +840,18 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     final user = auth.user;
     final isAdmin = user?.isAdmin == true;
 
-    // A member sees only their own wallet + its ledger (read-only).
+    // A member sees only their own wallet (tap the line to view its ledger).
     if (!isAdmin) {
       final mine = budget.wallets
           .where((w) => w.isMemberWallet && w.ownerId == user?.id)
           .toList();
-      return Card(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const ListTile(
-              leading: Icon(Icons.account_balance_wallet_rounded,
-                  color: AppTheme.incomeGreen),
-              title: Text('محفظتي'),
-              subtitle: Text('رصيدك وحركتك — يموّلها قائد العائلة.'),
-            ),
-            const Divider(height: 1),
-            if (mine.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(12),
-                child: Text('جاري تجهيز محفظتك...'),
-              )
-            else
-              ...mine.map((w) => _walletLedgerTile(context, budget, w)),
-          ],
-        ),
+      return _walletsGroupCard(
+        context,
+        budget,
+        title: 'محفظتي',
+        subtitle: 'اضغط لعرض الرصيد والحركة — يموّلها قائد العائلة.',
+        wallets: mine,
+        emptyText: 'جاري تجهيز محفظتك...',
       );
     }
 
@@ -876,17 +863,17 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           context,
           budget,
           title: 'محافظي (مصادر النقد)',
-          subtitle: 'كاش/بنك — منها تموّل الأعضاء وتصرف.',
+          subtitle: 'كاش/بنك — اضغط + لإضافة محفظة، واضغط محفظة لإدارتها.',
           wallets: adminWallets,
           onAdd: budget.loading ? null : _showAddWalletDialog,
           showManage: true,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         _walletsGroupCard(
           context,
           budget,
           title: 'محافظ الأعضاء',
-          subtitle: 'محفظة واحدة لكل عضو — موّل أو اسحب.',
+          subtitle: 'اضغط على عضو ثم موّل أو اسحب.',
           wallets: memberWallets,
           showFunding: true,
           emptyText: 'لا يوجد أعضاء بعد. أضف أفراد العائلة من شاشة الأعضاء.',
@@ -905,78 +892,41 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     bool showManage = false,
     bool showFunding = false,
     String emptyText = 'لا توجد محافظ بعد.',
+    bool initiallyExpanded = true,
   }) {
     return Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.account_balance_wallet_rounded,
-                color: AppTheme.incomeGreen),
-            title: Text(title),
-            subtitle: Text(subtitle),
-            trailing: onAdd == null
-                ? null
-                : IconButton(
-                    tooltip: 'إضافة محفظة',
-                    onPressed: onAdd,
-                    icon: const Icon(Icons.add_rounded),
-                  ),
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: initiallyExpanded,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          leading: const Icon(Icons.account_balance_wallet_rounded,
+              color: AppTheme.incomeGreen),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(title,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              if (onAdd != null)
+                IconButton(
+                  tooltip: 'إضافة محفظة',
+                  icon: const Icon(Icons.add_rounded),
+                  onPressed: onAdd,
+                ),
+            ],
           ),
-          const Divider(height: 1),
-          if (wallets.isEmpty)
-            Padding(padding: const EdgeInsets.all(12), child: Text(emptyText))
-          else ...[
-            _walletsOverviewTable(wallets),
-            const Divider(height: 1),
-            ...wallets.map((w) => _walletLedgerTile(context, budget, w,
-                showManage: showManage, showFunding: showFunding)),
+          subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          children: [
+            if (wallets.isEmpty)
+              Padding(padding: const EdgeInsets.all(12), child: Text(emptyText))
+            else
+              ...wallets.map((w) => _walletLedgerTile(context, budget, w,
+                  showManage: showManage, showFunding: showFunding)),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _walletsOverviewTable(List<WalletModel> wallets) {
-    final fmt = NumberFormat('#,##0');
-    final dt = DateFormat('yyyy/MM/dd HH:mm');
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: DataTable(
-        columnSpacing: 24,
-        headingRowHeight: 38,
-        dataRowMinHeight: 42,
-        dataRowMaxHeight: 64,
-        columns: const [
-          DataColumn(label: Text('المحفظة')),
-          DataColumn(label: Text('الوصف')),
-          DataColumn(label: Text('الرصيد')),
-          DataColumn(label: Text('آخر تحديث')),
-          DataColumn(label: Text('بواسطة')),
-        ],
-        rows: wallets
-            .map(
-              (w) => DataRow(cells: [
-                DataCell(Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(w.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text(w.id,
-                        style:
-                            const TextStyle(fontSize: 10, color: Colors.grey)),
-                  ],
-                )),
-                DataCell(Text(w.description.isEmpty ? '—' : w.description)),
-                DataCell(Text('${fmt.format(w.balance)} ج')),
-                DataCell(
-                    Text(w.updatedAt == null ? '—' : dt.format(w.updatedAt!))),
-                DataCell(Text(w.updatedByLabel)),
-              ]),
-            )
-            .toList(),
+        ),
       ),
     );
   }

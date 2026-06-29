@@ -253,9 +253,11 @@ class _ChatScreenState extends State<ChatScreen> {
       try {
         final chat = context.read<ChatProvider>();
         if (isBalance) {
-          await chat.showWalletBalance(widget.groupId, wallet);
+          await chat.showWalletBalance(widget.groupId, wallet,
+              requesterId: qUser?.id);
         } else {
-          await chat.showWalletMovement(widget.groupId, wallet);
+          await chat.showWalletMovement(widget.groupId, wallet,
+              requesterId: qUser?.id);
         }
         await chat.refreshMessages(widget.groupId);
       } finally {
@@ -1044,6 +1046,19 @@ class _ChatScreenState extends State<ChatScreen> {
     final budget = context.watch<BudgetProvider>();
     final notifications = context.watch<NotificationProvider>();
     final user = auth.user;
+    // Admin sees the family total; a member sees only their own wallet.
+    final visibleBalance = (user == null || user.isAdmin)
+        ? budget.balance
+        : budget.wallets
+            .where((w) => w.isMemberWallet && w.ownerId == user.id)
+            .fold<double>(0, (s, w) => s + w.balance);
+    // Admin sees the whole feed; a member sees only their own + messages to them.
+    final visibleMessages = (user == null || user.isAdmin)
+        ? chat.messages
+        : chat.messages
+            .where((m) =>
+                m.senderId == user.id || m.targetUserId == user.id)
+            .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -1069,7 +1084,7 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               Text(widget.groupName, style: const TextStyle(fontSize: 18)),
               Text(
-                'رصيد المحافظ: ${NumberFormat('#,###').format(budget.balance)} ج',
+                '${user?.name ?? ''} • ${NumberFormat('#,###').format(visibleBalance)} ج',
                 style: const TextStyle(fontSize: 13, color: Colors.white70),
               ),
               const Text(
@@ -1142,15 +1157,16 @@ class _ChatScreenState extends State<ChatScreen> {
                   builder: (_) => MembersScreen(groupId: widget.groupId)),
             ),
           ),
-          IconButton(
-            tooltip: 'الفرق',
-            icon: const Icon(Icons.groups_2_rounded),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => TeamsScreen(groupId: widget.groupId)),
+          if (user?.isAdmin == true)
+            IconButton(
+              tooltip: 'الفرق',
+              icon: const Icon(Icons.groups_2_rounded),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => TeamsScreen(groupId: widget.groupId)),
+              ),
             ),
-          ),
           if (user?.isAdmin == true)
             IconButton(
               tooltip: 'الإعدادات',
@@ -1253,7 +1269,7 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: chat.loading
                 ? const Center(child: CircularProgressIndicator())
-                : chat.messages.isEmpty
+                : visibleMessages.isEmpty
                     ? const Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -1275,9 +1291,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         reverse: true,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 8),
-                        itemCount: chat.messages.length,
+                        itemCount: visibleMessages.length,
                         itemBuilder: (context, index) {
-                          final msg = chat.messages[index];
+                          final msg = visibleMessages[index];
                           return ChatBubble(
                             message: msg,
                             isMe: msg.senderId == user?.id,

@@ -10,6 +10,7 @@ import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/database_service.dart';
 import '../services/auth_service.dart';
+import 'member_detail_screen.dart';
 
 class MembersScreen extends StatefulWidget {
   final String groupId;
@@ -65,6 +66,15 @@ class _MembersScreenState extends State<MembersScreen> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: ListTile(
+                      onTap: (auth.user?.isAdmin == true && !member.isAdmin)
+                          ? () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => MemberDetailScreen(
+                                      groupId: widget.groupId, member: member),
+                                ),
+                              )
+                          : null,
                       leading: CircleAvatar(
                         backgroundColor: member.isAdmin
                             ? AppTheme.gold

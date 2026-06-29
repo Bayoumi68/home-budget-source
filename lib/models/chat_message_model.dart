@@ -19,6 +19,8 @@ class ChatMessage {
   final bool isDeleted;
   // True when this expense exceeded the member's monthly cap (soft flag → red).
   final bool overCap;
+  // For admin→member directed messages (per-member chat); null = family-wide.
+  final String? targetUserId;
 
   ChatMessage({
     required this.id,
@@ -37,6 +39,7 @@ class ChatMessage {
     this.transactionId,
     this.isDeleted = false,
     this.overCap = false,
+    this.targetUserId,
   });
 
   Map<String, dynamic> toMap() => {
@@ -56,6 +59,7 @@ class ChatMessage {
     'transactionId': transactionId,
     'isDeleted': isDeleted,
     'overCap': overCap,
+    'targetUserId': targetUserId,
   };
 
   factory ChatMessage.fromMap(Map<String, dynamic> map) => ChatMessage(
@@ -75,6 +79,7 @@ class ChatMessage {
     transactionId: map['transactionId'],
     isDeleted: map['isDeleted'] == true,
     overCap: map['overCap'] == true,
+    targetUserId: map['targetUserId'],
   );
 }
 

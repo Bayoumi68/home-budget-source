@@ -25,6 +25,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   String _period = 'month';
   DateTimeRange? _customRange;
   List<UserModel> _members = [];
+  String? _memberFilterId; // admin: null = whole family, else a member
 
   @override
   void initState() {
@@ -77,13 +78,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final user = context.read<AuthProvider>().user;
     final isAdmin = user?.isAdmin == true;
 
-    // Scope: admin sees the whole family; a member sees only their own data.
+    // Scope: admin sees the family (or a filtered member); member sees own.
+    final effectiveUserId = isAdmin ? _memberFilterId : user?.id;
     final scopedTxns = budget.transactions
-        .where((t) => isAdmin || t.userId == user?.id)
+        .where((t) => effectiveUserId == null || t.userId == effectiveUserId)
         .where((t) => _inPeriod(t.date))
         .toList();
     final scopedWallets = budget.wallets
-        .where((w) => isAdmin || (w.isMemberWallet && w.ownerId == user?.id))
+        .where((w) => effectiveUserId == null
+            ? true
+            : (w.isMemberWallet && w.ownerId == effectiveUserId))
         .toList();
 
     final expenses = scopedTxns
@@ -100,90 +104,132 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _periodSelector(),
-          const SizedBox(height: 16),
+          _topPickers(isAdmin),
+          const SizedBox(height: 12),
           _summaryRow(isAdmin, expenses, income, walletBalance),
-          const SizedBox(height: 24),
-          _sectionTitle('توزيع المصروفات'),
-          const SizedBox(height: 8),
-          _categorySection(scopedTxns),
-          if (isAdmin) ...[
-            const SizedBox(height: 24),
-            _sectionTitle('أرصدة ومصروفات الأعضاء'),
-            const SizedBox(height: 8),
-            _byMemberSection(budget.wallets, scopedTxns),
-          ],
-          if (isAdmin) ...[
-            const SizedBox(height: 24),
-            _sectionTitle('حسب المحفظة'),
-            const SizedBox(height: 8),
-            _byWalletSection(budget.wallets, scopedTxns),
-          ],
-          const SizedBox(height: 24),
-          _sectionTitle('المصروفات عبر الوقت'),
-          const SizedBox(height: 8),
-          _trendSection(scopedTxns),
-          if (isAdmin) ...[
-            const SizedBox(height: 24),
-            _sectionTitle('الميزانيات مقابل الفعلي'),
-            const SizedBox(height: 8),
-            _budgetsSection(budget),
-          ],
+          const SizedBox(height: 16),
+          _collapsible('توزيع المصروفات', _categorySection(scopedTxns)),
+          if (isAdmin)
+            _collapsible('أرصدة ومصروفات الأعضاء',
+                _byMemberSection(budget.wallets, scopedTxns)),
+          if (isAdmin)
+            _collapsible(
+                'حسب المحفظة', _byWalletSection(budget.wallets, scopedTxns)),
+          _collapsible('المصروفات عبر الوقت', _trendSection(scopedTxns)),
+          if (isAdmin)
+            _collapsible('الميزانيات مقابل الفعلي', _budgetsSection(budget),
+                initiallyExpanded: false),
           const SizedBox(height: 32),
         ],
       ),
     );
   }
 
-  Widget _sectionTitle(String t) =>
-      Text(t, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold));
+  Widget _collapsible(String title, Widget child,
+      {bool initiallyExpanded = true}) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: initiallyExpanded,
+          title: Text(title,
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          children: [child],
+        ),
+      ),
+    );
+  }
 
-  // ─── Period selector ───
-  Widget _periodSelector() {
-    const options = {
+  // ─── Top pickers (period + member filter) ───
+  Widget _topPickers(bool isAdmin) {
+    const periods = {
       'today': 'اليوم',
       'week': 'أسبوع',
       'month': 'هذا الشهر',
       'quarter': '٣ شهور',
       'all': 'الكل',
+      'custom': 'مخصص',
     };
-    return Wrap(
-      spacing: 8,
-      runSpacing: 4,
+    final members = _members.where((m) => !m.isAdmin).toList();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ...options.entries.map(
-          (e) => ChoiceChip(
-            label: Text(e.value),
-            selected: _period == e.key,
-            onSelected: (_) => setState(() => _period = e.key),
+        Expanded(
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'الفترة',
+              border: OutlineInputBorder(),
+              contentPadding:
+                  EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: _period,
+                items: periods.entries
+                    .map((e) =>
+                        DropdownMenuItem(value: e.key, child: Text(e.value)))
+                    .toList(),
+                onChanged: (v) => _onPeriodChanged(v),
+              ),
+            ),
           ),
         ),
-        ChoiceChip(
-          avatar: const Icon(Icons.date_range_rounded, size: 16),
-          label: Text(_period == 'custom' && _customRange != null
-              ? '${DateFormat('MM/dd').format(_customRange!.start)} - ${DateFormat('MM/dd').format(_customRange!.end)}'
-              : 'مخصص'),
-          selected: _period == 'custom',
-          onSelected: (_) async {
-            final now = DateTime.now();
-            final picked = await showDateRangePicker(
-              context: context,
-              firstDate: DateTime(2020),
-              lastDate: now,
-              initialDateRange: _customRange ??
-                  DateTimeRange(
-                      start: now.subtract(const Duration(days: 7)), end: now),
-            );
-            if (picked != null) {
-              setState(() {
-                _customRange = picked;
-                _period = 'custom';
-              });
-            }
-          },
-        ),
+        if (isAdmin) ...[
+          const SizedBox(width: 8),
+          Expanded(
+            child: InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'العضو',
+                border: OutlineInputBorder(),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  isExpanded: true,
+                  value: _memberFilterId,
+                  items: [
+                    const DropdownMenuItem<String?>(
+                        value: null, child: Text('كل العائلة')),
+                    ...members.map((m) => DropdownMenuItem<String?>(
+                        value: m.id, child: Text(m.name))),
+                  ],
+                  onChanged: (v) => setState(() => _memberFilterId = v),
+                ),
+              ),
+            ),
+          ),
+        ],
       ],
     );
+  }
+
+  Future<void> _onPeriodChanged(String? v) async {
+    if (v == null) return;
+    if (v == 'custom') {
+      final now = DateTime.now();
+      final picked = await showDateRangePicker(
+        context: context,
+        firstDate: DateTime(2020),
+        lastDate: now,
+        initialDateRange: _customRange ??
+            DateTimeRange(
+                start: now.subtract(const Duration(days: 7)), end: now),
+      );
+      if (picked != null) {
+        setState(() {
+          _customRange = picked;
+          _period = 'custom';
+        });
+      }
+    } else {
+      setState(() => _period = v);
+    }
   }
 
   // ─── Summary ───

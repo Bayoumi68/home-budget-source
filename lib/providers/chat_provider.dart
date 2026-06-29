@@ -379,7 +379,8 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Answers "رصيد المحفظة" — posts the selected wallet's current balance.
-  Future<void> showWalletBalance(String groupId, WalletModel wallet) async {
+  Future<void> showWalletBalance(String groupId, WalletModel wallet,
+      {String? requesterId}) async {
     var w = wallet;
     try {
       final wallets = await _db.getWalletsSync(groupId);
@@ -394,16 +395,19 @@ class ChatProvider extends ChangeNotifier {
     await _sendSystemMessage(
       groupId,
       '👛 رصيد ${w.name}: ${w.balance.toStringAsFixed(0)} ج$updated$by',
+      targetUserId: requesterId,
     );
     await refreshMessages(groupId);
   }
 
   /// Answers "حركة المحفظة / تقرير المحفظة" — posts the recent ledger lines.
-  Future<void> showWalletMovement(String groupId, WalletModel wallet) async {
+  Future<void> showWalletMovement(String groupId, WalletModel wallet,
+      {String? requesterId}) async {
     final entries = await _db.getWalletEntriesSync(groupId, wallet.id);
     if (entries.isEmpty) {
       await _sendSystemMessage(
-          groupId, '📒 لا توجد حركة على ${wallet.name} بعد.');
+          groupId, '📒 لا توجد حركة على ${wallet.name} بعد.',
+          targetUserId: requesterId);
       await refreshMessages(groupId);
       return;
     }
@@ -422,7 +426,8 @@ class ChatProvider extends ChangeNotifier {
       lines.add('… الباقي في شاشة المحافظ بالإعدادات.');
     }
     lines.add('الرصيد الحالي: ${current.toStringAsFixed(0)} ج');
-    await _sendSystemMessage(groupId, lines.join('\n'));
+    await _sendSystemMessage(groupId, lines.join('\n'),
+        targetUserId: requesterId);
     await refreshMessages(groupId);
   }
 
@@ -530,7 +535,8 @@ class ChatProvider extends ChangeNotifier {
     return pages.isEmpty ? ['لا توجد بيانات كافية للتقرير.'] : pages;
   }
 
-  Future<void> _sendSystemMessage(String groupId, String content) async {
+  Future<void> _sendSystemMessage(String groupId, String content,
+      {String? targetUserId}) async {
     final systemMsg = ChatMessage(
       id: _uuid.v4(),
       groupId: groupId,
@@ -539,6 +545,7 @@ class ChatProvider extends ChangeNotifier {
       type: MessageType.system,
       content: content,
       timestamp: DateTime.now(),
+      targetUserId: targetUserId,
     );
     await _db.sendMessage(systemMsg);
   }
