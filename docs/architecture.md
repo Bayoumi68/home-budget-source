@@ -27,11 +27,14 @@ Two independent axes — **people** and **accounts**:
   still post, marked red), not a block.
 - **Roles in the UI:** a member sees only their own wallet, own chat entries, and own reports;
   the admin sees everyone.
-- **Teams have no money pot.** A team is a grouping of family members (its `memberIds` are real
-  members with their own wallets). The team's number is a **rollup = the sum of its members'
-  wallet balances**; a team expense comes from the member's **own wallet**, tagged with
-  `teamId` for reporting. (Adding someone to a team adds them as a family member, so their
-  wallet is auto-provisioned.)
+- **Teams = workers, not family members.** A team is a group of **workers** for the family
+  (maids, drivers…). A worker is a member doc **tagged with `teamId`** (and a wallet with the
+  same `teamId`) — kept out of the family proper. Only the **admin** sees/manages teams (under
+  الفرق): adds workers, funds/withdraws their wallets. A team has **no pot**; its number is the
+  **rollup = sum of its workers' wallet balances**, and a worker's expense comes from their
+  **own wallet**. A worker who logs in (via a team invite) lands in a **team-only view** of
+  their own data and never sees the family. Every family view (members list, settings member
+  wallets, analytics) **excludes workers** (`isFamilyMemberWallet` / `getFamilyMembersSync`).
 
 ## Data model (Firestore)
 
