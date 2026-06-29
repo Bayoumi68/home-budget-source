@@ -441,6 +441,8 @@ class ChatProvider extends ChangeNotifier {
         return 'رصيد افتتاحي';
       case 'injection':
         return 'إيداع نقدي';
+      case 'withdrawal':
+        return 'سحب نقدي';
       case 'expense':
         return 'مصروف';
       case 'adjustment':

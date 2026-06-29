@@ -1101,7 +1101,7 @@ class DatabaseService {
     if (data['isDefault'] == true) return 'لا يمكن حذف المحفظة الأساسية.';
     final bal = (data['balance'] as num?)?.toDouble() ?? 0;
     if (bal.abs() > 0.005) {
-      return 'لا يمكن حذف محفظة بها رصيد. اضبط الرصيد على صفر أولًا.';
+      return 'لا يمكن حذف محفظة بها رصيد. اسحب رصيدها أولًا.';
     }
     await ref.set({
       'archived': true,
@@ -1131,26 +1131,6 @@ class DatabaseService {
       source: source,
       note: note,
       refTransactionId: refTransactionId,
-      byName: byName,
-      byPhone: byPhone,
-    );
-  }
-
-  /// Set a wallet to an absolute [target] balance, recording the difference as
-  /// an 'adjustment' ledger entry. Returns the new balance.
-  Future<double> setWalletBalance(
-    String groupId,
-    String walletId,
-    double target, {
-    String? byName,
-    String? byPhone,
-  }) {
-    return _postWallet(
-      groupId,
-      walletId,
-      computeSigned: (current) => target - current,
-      source: 'adjustment',
-      note: 'تعديل يدوي للرصيد',
       byName: byName,
       byPhone: byPhone,
     );

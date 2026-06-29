@@ -211,25 +211,42 @@ class BudgetProvider extends ChangeNotifier {
     }
   }
 
-  /// Set a wallet to an absolute balance (records an adjustment ledger entry).
-  Future<void> setWalletBalance(
+  /// Record an external cash movement on a single wallet (deposit = DR money in,
+  /// withdraw = CR money out). Balance only ever changes through such records —
+  /// it is never set manually. Returns an Arabic error, or null on success.
+  Future<String?> walletCashMovement(
     String groupId,
     String walletId,
-    double target, {
+    double amount, {
+    required bool deposit,
     String? byName,
     String? byPhone,
   }) async {
+    if (amount <= 0) return 'المبلغ غير صحيح.';
+    if (!deposit) {
+      final w = _wallets.firstWhere((x) => x.id == walletId,
+          orElse: () => WalletModel(id: walletId, name: '', balance: 0));
+      if (amount > w.balance + 0.005) {
+        return 'الرصيد غير كافٍ للسحب.';
+      }
+    }
     _loading = true;
     notifyListeners();
     try {
-      await _db.setWalletBalance(
+      await _db.postWalletEntry(
         groupId,
         walletId,
-        target,
+        direction: deposit ? 'DR' : 'CR',
+        amount: amount,
+        source: deposit ? 'injection' : 'withdrawal',
+        note: deposit ? 'إيداع نقدي' : 'سحب نقدي',
         byName: byName,
         byPhone: byPhone,
       );
       _wallets = await _db.getWalletsSync(groupId);
+      return null;
+    } catch (_) {
+      return 'تعذّر تنفيذ العملية.';
     } finally {
       _loading = false;
       notifyListeners();

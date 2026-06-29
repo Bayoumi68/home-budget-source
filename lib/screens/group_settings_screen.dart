@@ -272,13 +272,17 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         );
   }
 
-  Future<void> _showSetBalanceDialog(WalletModel wallet) async {
-    final controller =
-        TextEditingController(text: wallet.balance.toStringAsFixed(0));
+  /// Record an external cash deposit/withdrawal on a wallet (a new ledger
+  /// entry). The balance is never set directly — it moves only via such records.
+  Future<void> _showCashDialog(WalletModel wallet,
+      {required bool withdraw}) async {
+    final controller = TextEditingController();
     final amount = await showDialog<double>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('تحديد رصيد ${wallet.name}'),
+        title: Text(withdraw
+            ? 'سحب نقدي من ${wallet.name}'
+            : 'إيداع نقدي في ${wallet.name}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -287,15 +291,18 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
               keyboardType: TextInputType.number,
               textDirection: ui.TextDirection.ltr,
               decoration: const InputDecoration(
-                labelText: 'الرصيد الحالي',
+                labelText: 'المبلغ',
+                hintText: 'المبلغ بالجنيه',
                 border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'سيتم تسجيل الفرق كحركة "تعديل رصيد" في سجل المحفظة.',
+            Text(
+              withdraw
+                  ? 'يُسجَّل كحركة سحب في كشف المحفظة.'
+                  : 'يُسجَّل كحركة إيداع في كشف المحفظة.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
         ),
@@ -307,21 +314,29 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
               ctx,
               double.tryParse(controller.text.trim().replaceAll(',', '.')),
             ),
-            child: const Text('حفظ'),
+            child: Text(withdraw ? 'سحب' : 'إيداع'),
           ),
         ],
       ),
     );
     controller.dispose();
-    if (amount == null || amount < 0 || !mounted) return;
+    if (amount == null || amount <= 0 || !mounted) return;
     final user = context.read<AuthProvider>().user;
-    await context.read<BudgetProvider>().setWalletBalance(
+    final error = await context.read<BudgetProvider>().walletCashMovement(
           widget.groupId,
           wallet.id,
           amount,
+          deposit: !withdraw,
           byName: user?.name,
           byPhone: user?.phone,
         );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(error ??
+          (withdraw
+              ? 'تم سحب ${amount.toStringAsFixed(0)} ج من ${wallet.name}'
+              : 'تم إيداع ${amount.toStringAsFixed(0)} ج في ${wallet.name}')),
+    ));
   }
 
   Future<void> _confirmDeleteWallet(WalletModel wallet) async {
@@ -336,7 +351,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
       builder: (ctx) => AlertDialog(
         title: Text('حذف ${wallet.name}؟'),
         content: const Text(
-            'لا يمكن حذف محفظة بها رصيد — اضبط رصيدها على صفر أولًا. سيتم إخفاء المحفظة مع الاحتفاظ بسجل حركتها.'),
+            'لا يمكن حذف محفظة بها رصيد — اسحب رصيدها أولًا. سيتم إخفاء المحفظة مع الاحتفاظ بسجل حركتها.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -1033,16 +1048,28 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                     children: [
               if (showManage) ...[
                 OutlinedButton.icon(
+                  onPressed: budget.loading
+                      ? null
+                      : () => _showCashDialog(w, withdraw: false),
+                  icon: const Icon(Icons.add_card_rounded, size: 18),
+                  label: const Text('إيداع'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.incomeGreen),
+                ),
+                OutlinedButton.icon(
+                  onPressed: budget.loading
+                      ? null
+                      : () => _showCashDialog(w, withdraw: true),
+                  icon: const Icon(Icons.output_rounded, size: 18),
+                  label: const Text('سحب'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.expenseRed),
+                ),
+                OutlinedButton.icon(
                   onPressed:
                       budget.loading ? null : () => _showEditWalletDialog(w),
                   icon: const Icon(Icons.edit_rounded, size: 18),
                   label: const Text('تعديل'),
-                ),
-                OutlinedButton.icon(
-                  onPressed:
-                      budget.loading ? null : () => _showSetBalanceDialog(w),
-                  icon: const Icon(Icons.tune_rounded, size: 18),
-                  label: const Text('تحديد الرصيد'),
                 ),
                 OutlinedButton.icon(
                   onPressed: (budget.loading || w.isDefault)
@@ -1148,6 +1175,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         return 'رصيد افتتاحي';
       case 'injection':
         return 'إيداع نقدي';
+      case 'withdrawal':
+        return 'سحب نقدي';
       case 'expense':
         return 'مصروف';
       case 'adjustment':
