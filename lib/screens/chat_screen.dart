@@ -821,19 +821,16 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _shareFamilyInvite() async {
-    final auth = context.read<AuthProvider>();
-    final code = auth.group?.inviteCode;
-    final groupId = auth.group?.id ?? widget.groupId;
-    final installUrl = code == null
-        ? '${AppConstants.appWebLink}/install.html'
-        : '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'دعوة فرد للانضمام إلى عائلتنا على Home Budget\n\n'
-        'افتح الرابط التالي:\n$installUrl\n\n'
-        'افتح نسخة الويب من الصفحة مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
-        'أندرويد: APK اختياري لو تريد تجربة تطبيق مثبت أو لو الصوت من المتصفح لم يعمل.\n'
-        'آيفون: استخدم الويب، والتسجيل الصوتي قد لا يعمل بسبب قيود Safari.\n\n'
-        'رابط APK الاختياري لأندرويد:\n${AppConstants.androidDownloadLink}\n'
-        '${code == null ? '' : '\nكود الدعوة: $code'}';
+    final groupId = context.read<AuthProvider>().group?.id ?? widget.groupId;
+    final code = await _db.createInvite(groupId: groupId);
+    if (!mounted) return;
+    final installUrl =
+        '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
+    final message = 'دعوة للانضمام إلى عائلتنا على Home Budget\n\n'
+        'افتح الرابط التالي وادخل اسمك للانضمام:\n$installUrl\n\n'
+        'هذا الرابط للاستخدام مرة واحدة فقط (كود: $code).\n'
+        'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n\n'
+        'رابط APK الاختياري لأندرويد:\n${AppConstants.androidDownloadLink}';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =
         Uri.parse('https://wa.me/?text=${Uri.encodeComponent(message)}');

@@ -206,24 +206,17 @@ class _MembersScreenState extends State<MembersScreen> {
 
   Future<void> _shareInviteToMember(UserModel member) async {
     final group = await _db.getGroupById(widget.groupId);
-    final code = group?.inviteCode;
-    if (code == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('كود الدعوة غير متاح')),
-        );
-      }
-      return;
-    }
+    final code = await _db.createInvite(groupId: widget.groupId);
+    if (!mounted) return;
     final permissions = _permissionsText(member);
     final memberPhone = Uri.encodeComponent(member.phone ?? '');
     final inviteLanding =
-        '${AppConstants.appWebLink}/install.html?join=1&groupId=${widget.groupId}&phone=$memberPhone&code=$code&v=${Uri.encodeComponent(AppConstants.appVersion)}';
+        '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&phone=$memberPhone&v=${Uri.encodeComponent(AppConstants.appVersion)}';
     final message = 'مرحبًا ${member.name},\n'
         'تمت دعوتك للانضمام إلى عائلة ${group?.name ?? ''} على Home Budget.\n\n'
-        'افتح رابط الدعوة:\n$inviteLanding\n\n'
-        'سجّل الدخول بحساب Google أو أنشئ حسابًا بالبريد، ثم أدخل رقم موبايلك للتأكيد:\n${member.phone ?? ''}\n\n'
-        'لو رقمك مختلف، راسل قائد العائلة ليرسل لك دعوة بالرقم الصحيح.\n\n'
+        'افتح رابط الدعوة وادخل اسمك للانضمام:\n$inviteLanding\n\n'
+        'هذا الرابط للاستخدام مرة واحدة فقط (كود: $code).\n'
+        'اكتب رقم موبايلك (${member.phone ?? ''}) ليتم ربطك بصلاحياتك المحددة.\n\n'
         'يعمل على الويب مباشرة (أندرويد/آيفون) بدون تثبيت، وAPK اختياري لأندرويد.\n\n'
         'صلاحياتك: $permissions';
     await Clipboard.setData(ClipboardData(text: message));

@@ -176,53 +176,6 @@ class DatabaseService {
   }
 
   // ─── Groups ───
-  Future<GroupModel> createGroup(
-    String name,
-    String adminId,
-    String adminName, {
-    String? adminPhone,
-    String? adminAuthUid,
-  }) async {
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
-    final inviteCode = _newInviteCode();
-    final admin = UserModel(
-      id: adminId,
-      name: adminName,
-      phone: adminPhone,
-      authUid: adminAuthUid,
-      isAdmin: true,
-      canAddExpenses: true,
-      canViewReports: true,
-      canManageMembers: true,
-      canManageBudgets: true,
-      // The creator just proved ownership of this number at sign-up.
-      phoneVerified: true,
-    );
-    final group = GroupModel(
-      id: id,
-      name: name,
-      adminId: adminId,
-      members: [admin],
-      inviteCode: inviteCode,
-    );
-    await _families.doc(id).set({
-      ...group.toMap(),
-      'appVersion': AppConstants.appVersion,
-      'createdAt': DateTime.now().toIso8601String(),
-    });
-    await _members(id).doc(admin.id).set({
-      ...admin.toMap(),
-      'createdAt': DateTime.now().toIso8601String(),
-    });
-    await _inviteCodes.doc(inviteCode).set({
-      'groupId': id,
-      'inviteCode': inviteCode,
-      'createdAt': DateTime.now().toIso8601String(),
-      'appVersion': AppConstants.appVersion,
-    });
-    await writeDiagnostic('create_group', groupId: id, userId: admin.id);
-    return group;
-  }
 
   // ─── New auth model: create / join / session-by-login ───
 
@@ -402,18 +355,143 @@ class DatabaseService {
     return member;
   }
 
-  Future<GroupModel?> getGroupByInvite(String code) async {
+  // Unambiguous one-time code alphabet (no 0/O/1/I).
+  String _newOneTimeCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    return List.generate(
+        8, (_) => chars[_secureRandom.nextInt(chars.length)]).join();
+  }
+
+  /// Create a fresh single-use invite code for a family (or a specific team).
+  Future<String> createInvite({
+    required String groupId,
+    String? teamId,
+    String? createdByUid,
+  }) async {
+    var code = _newOneTimeCode();
+    for (var i = 0; i < 5; i++) {
+      final existing = await _inviteCodes.doc(code).get();
+      if (!existing.exists) break;
+      code = _newOneTimeCode();
+    }
+    await _inviteCodes.doc(code).set({
+      'inviteCode': code,
+      'groupId': groupId,
+      'teamId': teamId ?? '',
+      'used': false,
+      'createdByUid': createdByUid,
+      'createdAt': DateTime.now().toIso8601String(),
+      'appVersion': AppConstants.appVersion,
+    });
+    return code;
+  }
+
+  /// Read an invite code's target for display before joining.
+  Future<Map<String, dynamic>?> getInviteInfo(String code) async {
     final clean = code.trim().toUpperCase();
-    final inviteDoc = await _inviteCodes.doc(clean).get();
-    final groupId = inviteDoc.data()?['groupId']?.toString();
-    if (groupId != null && groupId.isNotEmpty) {
-      return getGroupById(groupId);
+    if (clean.isEmpty) return null;
+    final data = (await _inviteCodes.doc(clean).get()).data();
+    if (data == null) return null;
+    final groupId = (data['groupId'] ?? '').toString();
+    final teamId = (data['teamId'] ?? '').toString();
+    final group = groupId.isEmpty ? null : await getGroupById(groupId);
+    String? teamName;
+    if (group != null && teamId.isNotEmpty) {
+      teamName = (await getTeamById(groupId, teamId))?.name;
+    }
+    return {
+      'groupId': groupId,
+      'teamId': teamId,
+      'used': data['used'] == true,
+      'groupName': group?.name,
+      'teamName': teamName,
+    };
+  }
+
+  /// Self-join via a one-time code: bind/create the member, provision their
+  /// wallet, add them to the team if it's a team code, then consume the code.
+  Future<FamilyMembership> joinByCode({
+    required String code,
+    required String name,
+    String? phone,
+    required String authUid,
+    String? email,
+  }) async {
+    final clean = code.trim().toUpperCase();
+    if (clean.isEmpty) throw JoinFamilyException('اكتب كود الدعوة.');
+    final inviteRef = _inviteCodes.doc(clean);
+    final invite = (await inviteRef.get()).data();
+    if (invite == null) throw JoinFamilyException('كود الدعوة غير صحيح.');
+    if (invite['used'] == true) {
+      throw JoinFamilyException('كود الدعوة مُستخدَم بالفعل. اطلب رابطًا جديدًا.');
+    }
+    final groupId = (invite['groupId'] ?? '').toString();
+    final teamId = (invite['teamId'] ?? '').toString();
+    final group = await getGroupById(groupId);
+    if (group == null) {
+      throw JoinFamilyException('لم أجد العائلة. اطلب رابط دعوة جديد.');
     }
 
-    final q =
-        await _families.where('inviteCode', isEqualTo: clean).limit(1).get();
-    if (q.docs.isEmpty) return null;
-    return GroupModel.fromMap(q.docs.first.data());
+    final normalizedPhone = (phone ?? '').trim().isEmpty
+        ? ''
+        : _authService.normalizePhone(phone!.trim());
+
+    // Reuse an existing slot if this login or phone already maps to a member.
+    UserModel? existing;
+    try {
+      final q = await _members(groupId)
+          .where('authUid', isEqualTo: authUid)
+          .limit(1)
+          .get();
+      if (q.docs.isNotEmpty) existing = UserModel.fromMap(q.docs.first.data());
+    } catch (_) {}
+    if (existing == null && normalizedPhone.isNotEmpty) {
+      existing = await getMemberByPhone(groupId, normalizedPhone);
+    }
+
+    final memberId = existing?.id ??
+        (normalizedPhone.isEmpty
+            ? 'u_${_docSafeId(authUid)}'
+            : _authService.memberIdForPhone(normalizedPhone));
+
+    final base = existing ??
+        UserModel(
+          id: memberId,
+          name: name,
+          phone: normalizedPhone.isEmpty ? null : normalizedPhone,
+          canAddExpenses: true,
+          canViewReports: true,
+          canManageMembers: false,
+          canManageBudgets: false,
+        );
+    final toSave = base.copyWith(
+      id: memberId,
+      name: base.name.trim().isEmpty ? name : base.name,
+      phone: normalizedPhone.isEmpty ? base.phone : normalizedPhone,
+      authUid: authUid,
+      email: email,
+      phoneVerified: true,
+    );
+    await _members(groupId)
+        .doc(toSave.id)
+        .set(toSave.toMap(), SetOptions(merge: true));
+
+    try {
+      await provisionMemberWallets(groupId);
+    } catch (_) {}
+    if (teamId.isNotEmpty) {
+      try {
+        await addTeamMember(groupId, teamId, toSave);
+      } catch (_) {}
+    }
+
+    await inviteRef.set({
+      'used': true,
+      'usedByUid': authUid,
+      'usedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+
+    return FamilyMembership(group: group, member: toSave);
   }
 
   Future<GroupModel?> getGroupByName(String name) async {

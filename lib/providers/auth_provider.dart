@@ -153,6 +153,27 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Self-join via a one-time invite code. Returns null on success, else error.
+  Future<String?> joinByCode(String code, String name, String? phone) async {
+    final uid = _authService.currentAuthUid;
+    if (uid == null) return 'سجّل الدخول أولاً.';
+    try {
+      final membership = await _db.joinByCode(
+        code: code,
+        name: _resolveName(name),
+        phone: phone,
+        authUid: uid,
+        email: _authService.currentEmail,
+      );
+      await setSession(membership.member, membership.group);
+      return null;
+    } on JoinFamilyException catch (e) {
+      return e.toString();
+    } catch (e) {
+      return 'تعذّر الانضمام: $e';
+    }
+  }
+
   Future<List<FamilyMembership>> myMemberships() async {
     final uid = _authService.currentAuthUid;
     if (uid == null) return const [];

@@ -38,9 +38,13 @@ class _AuthScreenState extends State<AuthScreen> {
   // Join-invite params (set from a deep link / URL).
   String? _inviteGroupId;
   String? _invitePhone;
+  String? _inviteCode;
   String? _inviteFamilyName;
+  String? _inviteTeamName;
 
-  bool get _isJoin => (_inviteGroupId ?? '').trim().isNotEmpty;
+  bool get _isJoin =>
+      (_inviteCode ?? '').trim().isNotEmpty ||
+      (_inviteGroupId ?? '').trim().isNotEmpty;
 
   @override
   void initState() {
@@ -73,11 +77,24 @@ class _AuthScreenState extends State<AuthScreen> {
     final p = uri.queryParameters;
     final groupId = (p['groupId'] ?? p['familyId'] ?? '').trim();
     final phone = (p['phone'] ?? '').trim();
+    final code = (p['invite'] ?? p['code'] ?? '').trim();
     if (groupId.isNotEmpty) _inviteGroupId = groupId;
     if (phone.isNotEmpty) _invitePhone = phone;
+    if (code.isNotEmpty) _inviteCode = code;
   }
 
   Future<void> _loadInviteFamilyName() async {
+    final code = (_inviteCode ?? '').trim();
+    if (code.isNotEmpty) {
+      final info = await _db.getInviteInfo(code);
+      if (mounted && info != null) {
+        setState(() {
+          _inviteFamilyName = info['groupName'] as String?;
+          _inviteTeamName = info['teamName'] as String?;
+        });
+      }
+      return;
+    }
     final id = (_inviteGroupId ?? '').trim();
     if (id.isEmpty) return;
     final group = await _db.getGroupById(id);
@@ -181,6 +198,26 @@ class _AuthScreenState extends State<AuthScreen> {
     _goToChat();
   }
 
+  Future<void> _joinByCode() async {
+    if (_busy) return;
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      _snack('اكتب اسمك.');
+      return;
+    }
+    setState(() => _busy = true);
+    final auth = context.read<AuthProvider>();
+    final phone = _phoneController.text.trim();
+    final err =
+        await auth.joinByCode(_inviteCode!, name, phone.isEmpty ? null : phone);
+    if (mounted) setState(() => _busy = false);
+    if (err != null) {
+      _snack(err);
+      return;
+    }
+    _goToChat();
+  }
+
   Future<void> _openMyFamily() async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -271,6 +308,10 @@ class _AuthScreenState extends State<AuthScreen> {
   /// "enter" card (login as admin/member). Re-joining is only for brand-new
   /// members with no membership yet.
   Widget _authedBody(AuthProvider auth) {
+    // Opening a one-time invite link → self-join card (no pre-registration).
+    if ((_inviteCode ?? '').trim().isNotEmpty && !_creatingFamily) {
+      return _joinByCodeCard(auth);
+    }
     _membershipsFuture ??= auth.myMemberships();
     return FutureBuilder<List<FamilyMembership>>(
       future: _membershipsFuture,
@@ -288,6 +329,57 @@ class _AuthScreenState extends State<AuthScreen> {
         if (_isJoin && memberships.isEmpty) return _joinCard(auth);
         return _homeChoiceCard(auth);
       },
+    );
+  }
+
+  Widget _joinByCodeCard(AuthProvider auth) {
+    final target = _inviteTeamName != null && _inviteTeamName!.isNotEmpty
+        ? 'فريق "${_inviteTeamName!}"'
+        : (_inviteFamilyName != null && _inviteFamilyName!.isNotEmpty
+            ? 'عائلة "${_inviteFamilyName!}"'
+            : 'العائلة');
+    return Column(
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Text(
+            'دعوة للانضمام إلى $target',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                color: AppTheme.primaryGreen, fontWeight: FontWeight.bold),
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Text('أدخل اسمك للانضمام. رقم الموبايل اختياري.',
+            style: TextStyle(color: Colors.white70), textAlign: TextAlign.center),
+        const SizedBox(height: 14),
+        _whiteField(_nameController, 'اسمك', label: 'الاسم'),
+        const SizedBox(height: 12),
+        _whiteField(_phoneController, '01012345678',
+            keyboardType: TextInputType.phone,
+            rtl: false,
+            label: 'رقم موبايلك (اختياري)'),
+        const SizedBox(height: 18),
+        _primaryButton(
+            _busy ? null : _joinByCode, Icons.login_rounded, 'انضمام'),
+        const SizedBox(height: 6),
+        TextButton(
+          onPressed: _busy
+              ? null
+              : () => setState(() {
+                    _inviteCode = null;
+                    _inviteTeamName = null;
+                  }),
+          child:
+              const Text('ليست هذه دعوتي', style: TextStyle(color: Colors.white)),
+        ),
+        _signedInFooter(auth),
+      ],
     );
   }
 

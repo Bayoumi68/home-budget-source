@@ -584,22 +584,16 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   }
 
   Future<void> _shareInviteOnWhatsApp() async {
-    final auth = context.read<AuthProvider>();
-    final code = auth.group?.inviteCode;
-    if (code == null) return;
-    final groupId = auth.group?.id ?? widget.groupId;
+    final groupId = context.read<AuthProvider>().group?.id ?? widget.groupId;
+    final code = await _db.createInvite(groupId: groupId);
+    if (!mounted) return;
     final inviteLanding =
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'دعوة فرد للانضمام إلى عائلتنا على Home Budget\n\n'
-        'افتح الرابط التالي:\n$inviteLanding\n\n'
-        'قبل الإرسال تأكد أن قائد العائلة أضاف رقم تليفون العضو من شاشة الأعضاء.\n'
-        'العضو يكتب رقم تليفونه المسجل.\n\n'
-        'كود الدعوة للنسخ:\n$code\n\n'
-        'افتح نسخة الويب من الصفحة مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
-        'أندرويد: APK اختياري لو تريد تجربة تطبيق مثبت أو لو الصوت من المتصفح لم يعمل.\n'
-        'آيفون: استخدم الويب، والتسجيل الصوتي قد لا يعمل بسبب قيود Safari.\n\n'
-        'رابط APK الاختياري لأندرويد:\n${AppConstants.androidDownloadLink}\n\n'
-        'كود الدعوة: $code';
+    final message = 'دعوة للانضمام إلى عائلتنا على Home Budget\n\n'
+        'افتح الرابط التالي وادخل اسمك للانضمام:\n$inviteLanding\n\n'
+        'هذا الرابط للاستخدام مرة واحدة فقط (كود: $code).\n'
+        'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n\n'
+        'رابط APK الاختياري لأندرويد:\n${AppConstants.androidDownloadLink}';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =
         Uri.parse('https://wa.me/?text=${Uri.encodeComponent(message)}');
@@ -722,29 +716,11 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             child: Column(
               children: [
                 ListTile(
-                  leading:
-                      const Icon(Icons.vpn_key_rounded, color: AppTheme.gold),
-                  title: const Text('كود دعوة العائلة'),
-                  subtitle: Text(auth.group?.inviteCode ?? 'غير متاح'),
-                  trailing: const Icon(Icons.copy_rounded),
-                  onTap: () async {
-                    final code = auth.group?.inviteCode;
-                    if (code == null) return;
-                    await Clipboard.setData(ClipboardData(text: code));
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('تم نسخ كود الدعوة: $code')),
-                      );
-                    }
-                  },
-                ),
-                const Divider(height: 1),
-                ListTile(
                   leading: const Icon(Icons.share_rounded,
                       color: AppTheme.incomeGreen),
                   title: const Text('دعوة فرد للعائلة'),
                   subtitle: const Text(
-                      'يرسل صفحة ويب للانضمام، مع APK اختياري لأندرويد.'),
+                      'ينشئ رابط دعوة لمرة واحدة — يدخل اسمه وينضم.'),
                   trailing: const Icon(Icons.send_rounded),
                   onTap: _shareInviteOnWhatsApp,
                 ),

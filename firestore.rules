@@ -161,18 +161,13 @@ service cloud.firestore {
 
       match /teams/{teamId} {
         allow read: if validGroupId(groupId);
+        // Teams are member-groupings (no money pot): just identity + members.
         allow create, update: if validGroupId(groupId)
           && hasGroupField(groupId)
           && request.resource.data.id == teamId
           && request.resource.data.name is string
           && request.resource.data.ownerId is string
-          && request.resource.data.memberIds is list
-          && (
-            (request.resource.data.balance is number
-              && request.resource.data.balance >= 0)
-            || (request.resource.data.limit is number
-              && request.resource.data.limit >= 0)
-          );
+          && request.resource.data.memberIds is list;
         allow delete: if validGroupId(groupId);
       }
 
