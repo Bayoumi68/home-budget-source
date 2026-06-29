@@ -73,10 +73,29 @@ Write-Host "  3. شغّل الأمر:" -ForegroundColor White
 Write-Host "     flutter run" -ForegroundColor Magenta
 Write-Host ""
 
-$runNow = Read-Host "هل تريد تشغيل التطبيق الآن؟ (Y/N)"
+$runNow = Read-Host "هل تريد تشغيل التطبيق على موبايلك الآن؟ (Y/N)"
 if ($runNow -eq "Y" -or $runNow -eq "y") {
-    Write-Host "جاري تشغيل التطبيق..." -ForegroundColor Cyan
-    flutter run
+    # حدد adb لاكتشاف الموبايل (وعدم التشغيل على الكمبيوتر)
+    $adb = "$env:USERPROFILE\Android\Sdk\platform-tools\adb.exe"
+    if (-not (Test-Path $adb)) { $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" }
+    if (-not (Test-Path $adb)) { $adb = "adb" }
+
+    $serial = $null
+    try {
+        foreach ($line in (& $adb devices 2>$null)) {
+            if ($line -match '^(\S+)\s+device$') { $serial = $Matches[1]; break }
+        }
+    } catch {}
+
+    if ($serial) {
+        Write-Host "جاري التشغيل على الموبايل ($serial)..." -ForegroundColor Cyan
+        flutter run -d $serial
+    } else {
+        Write-Host ""
+        Write-Host "[!] لم يتم العثور على موبايل متصل، ولن يتم التشغيل على الكمبيوتر." -ForegroundColor Yellow
+        Write-Host "    فعّل أولًا: الإعدادات > حول الهاتف > اضغط 'رقم الإصدار' 7 مرات،" -ForegroundColor White
+        Write-Host "    ثم خيارات المطور > USB debugging، ووصّل الكابل واضغط 'السماح'." -ForegroundColor White
+    }
 }
 
 Read-Host "اضغط Enter للخروج"
