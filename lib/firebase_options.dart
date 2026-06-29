@@ -54,7 +54,10 @@ class DefaultFirebaseOptions {
     appId: '1:229990261595:web:d9cb284151bad290d3b07e',
     messagingSenderId: '229990261595',
     projectId: 'budget-home-bayoumi',
-    authDomain: 'budget-home-bayoumi.web.app',
+    // Same-origin as the primary site so Google web sign-in avoids the
+    // storage-partition "missing initial state" error. NOTE: re-running
+    // `flutterfire configure` resets this to firebaseapp.com — re-apply it.
+    authDomain: 'home-budgets.web.app',
     storageBucket: 'budget-home-bayoumi.firebasestorage.app',
     measurementId: 'G-0RNZB7PVNW',
   );

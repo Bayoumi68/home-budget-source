@@ -1,8 +1,8 @@
 class AppConstants {
   static const String appName = 'Home Budget';
-  static const String appWebLink = 'https://budget-home-bayoumi.web.app';
+  static const String appWebLink = 'https://home-budgets.web.app';
   static const String androidDownloadLink =
-      'https://budget-home-bayoumi.web.app/download.html';
+      'https://home-budgets.web.app/download.html';
   static const String appVersion = '0.5.23-team-only';
   // TESTING: when true, phone-auth uses Firebase's app-verification-disabled
   // mode + test phone numbers — no reCAPTCHA image puzzle, no real SMS. This
