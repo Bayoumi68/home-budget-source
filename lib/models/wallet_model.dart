@@ -3,6 +3,9 @@ class WalletModel {
   final String name;
   final String description;
   final double balance;
+  // A settable guide/target for this wallet (0 = none). Never the balance —
+  // balance only moves via ledger records.
+  final double limit;
   final bool isDefault;
   final bool archived;
   final DateTime? updatedAt;
@@ -18,6 +21,7 @@ class WalletModel {
     required this.name,
     this.description = '',
     required this.balance,
+    this.limit = 0,
     this.isDefault = false,
     this.archived = false,
     this.updatedAt,
@@ -45,6 +49,7 @@ class WalletModel {
         'name': name,
         'description': description,
         'balance': balance,
+        'limit': limit,
         'isDefault': isDefault,
         'archived': archived,
         'updatedAt': updatedAt?.toIso8601String(),
@@ -59,6 +64,7 @@ class WalletModel {
         name: map['name'] ?? 'المحفظة الأساسية',
         description: (map['description'] ?? '').toString(),
         balance: (map['balance'] as num?)?.toDouble() ?? 0,
+        limit: (map['limit'] as num?)?.toDouble() ?? 0,
         isDefault: map['isDefault'] == true,
         archived: map['archived'] == true,
         updatedAt: DateTime.tryParse((map['updatedAt'] ?? '').toString()),
@@ -73,6 +79,7 @@ class WalletModel {
     String? name,
     String? description,
     double? balance,
+    double? limit,
     bool? isDefault,
     bool? archived,
     DateTime? updatedAt,
@@ -86,6 +93,7 @@ class WalletModel {
         name: name ?? this.name,
         description: description ?? this.description,
         balance: balance ?? this.balance,
+        limit: limit ?? this.limit,
         isDefault: isDefault ?? this.isDefault,
         archived: archived ?? this.archived,
         updatedAt: updatedAt ?? this.updatedAt,

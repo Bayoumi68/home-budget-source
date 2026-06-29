@@ -219,31 +219,52 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   Future<void> _showEditWalletDialog(WalletModel wallet) async {
     final nameController = TextEditingController(text: wallet.name);
     final descController = TextEditingController(text: wallet.description);
+    final limitController = TextEditingController(
+        text: wallet.limit > 0 ? wallet.limit.toStringAsFixed(0) : '');
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('تعديل ${wallet.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              textDirection: ui.TextDirection.rtl,
-              decoration: const InputDecoration(
-                labelText: 'اسم المحفظة',
-                border: OutlineInputBorder(),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                textDirection: ui.TextDirection.rtl,
+                decoration: const InputDecoration(
+                  labelText: 'اسم المحفظة',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: descController,
-              textDirection: ui.TextDirection.rtl,
-              decoration: const InputDecoration(
-                labelText: 'الوصف (اختياري)',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 12),
+              TextField(
+                controller: descController,
+                textDirection: ui.TextDirection.rtl,
+                decoration: const InputDecoration(
+                  labelText: 'الوصف (اختياري)',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: limitController,
+                keyboardType: TextInputType.number,
+                textDirection: ui.TextDirection.ltr,
+                decoration: const InputDecoration(
+                  labelText: 'الحد/الميزانية (اختياري)',
+                  hintText: 'مبلغ إرشادي — ليس الرصيد',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'الحد دليل إرشادي فقط، لا يغيّر الرصيد. الرصيد يتغير بالحركات فقط.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -252,6 +273,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             onPressed: () => Navigator.pop(ctx, {
               'name': nameController.text.trim(),
               'description': descController.text.trim(),
+              'limit': limitController.text.trim(),
             }),
             child: const Text('حفظ'),
           ),
@@ -260,6 +282,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     );
     nameController.dispose();
     descController.dispose();
+    limitController.dispose();
     if (result == null || !mounted) return;
     final user = context.read<AuthProvider>().user;
     await context.read<BudgetProvider>().updateWallet(
@@ -267,6 +290,9 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           wallet.id,
           name: result['name'],
           description: result['description'],
+          limit: double.tryParse(
+                  (result['limit'] ?? '').replaceAll(',', '.')) ??
+              0,
           byName: user?.name,
           byPhone: user?.phone,
         );
@@ -1021,7 +1047,9 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                       Text(w.name,
                           style: const TextStyle(fontWeight: FontWeight.w600)),
                       Text(
-                        'الرصيد: ${fmt.format(w.balance)} ج${w.description.isEmpty ? '' : ' — ${w.description}'}',
+                        'الرصيد: ${fmt.format(w.balance)} ج'
+                        '${w.limit > 0 ? ' • الحد: ${fmt.format(w.limit)} ج' : ''}'
+                        '${w.description.isEmpty ? '' : ' — ${w.description}'}',
                         style:
                             const TextStyle(fontSize: 12, color: Colors.grey),
                       ),

@@ -446,12 +446,12 @@ class AIService {
   }
 
   static bool isNextReportCommand(String text) {
-    final normalized = _normalize(text);
-    return normalized == 'التالي' ||
-        normalized == 'التالى' ||
-        normalized == 'كمل' ||
-        normalized == 'اكمل' ||
-        normalized == 'اللي بعده';
+    final n = _normalize(text); // maps ى→ي, so التالى → التالي
+    if (n == 'كمل' || n == 'اكمل') return true;
+    return n.contains('التالي') ||
+        n.contains('اللي بعده') ||
+        n.contains('باقي التقرير') ||
+        n.contains('كمل التقرير');
   }
 
   static Map<String, dynamic>? parseReportRequest(String text) {

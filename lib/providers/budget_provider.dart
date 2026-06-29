@@ -190,6 +190,7 @@ class BudgetProvider extends ChangeNotifier {
     String walletId, {
     String? name,
     String? description,
+    double? limit,
     String? byName,
     String? byPhone,
   }) async {
@@ -201,6 +202,7 @@ class BudgetProvider extends ChangeNotifier {
         walletId,
         name: name,
         description: description,
+        limit: limit,
         byName: byName,
         byPhone: byPhone,
       );

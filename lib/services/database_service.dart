@@ -1072,12 +1072,14 @@ class DatabaseService {
     }
   }
 
-  /// Rename / re-describe a wallet. The wallet id stays stable.
+  /// Rename / re-describe / set the guide limit. Never touches balance; the id
+  /// stays stable.
   Future<void> updateWallet(
     String groupId,
     String walletId, {
     String? name,
     String? description,
+    double? limit,
     String? byName,
     String? byPhone,
   }) async {
@@ -1088,6 +1090,7 @@ class DatabaseService {
     };
     if (name != null && name.trim().isNotEmpty) m['name'] = name.trim();
     if (description != null) m['description'] = description.trim();
+    if (limit != null && limit >= 0) m['limit'] = limit;
     await _wallets(groupId).doc(walletId).set(m, SetOptions(merge: true));
   }
 
@@ -1602,9 +1605,6 @@ class DatabaseService {
     final expenses = filtered
         .where((t) => t.isExpense)
         .fold<double>(0.0, (sum, t) => sum + t.amount);
-    final income = filtered
-        .where((t) => !t.isExpense)
-        .fold<double>(0.0, (sum, t) => sum + t.amount);
     final byCategory = <String, double>{};
     for (final t in filtered.where((t) => t.isExpense)) {
       final display = _resolvedDisplayCategory(t, categories);
@@ -1612,6 +1612,44 @@ class DatabaseService {
     }
     final top = byCategory.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
+
+    // Funding (money in) + current balance from the wallet ledger — consistent
+    // with the Reports screen (funding is a ledger record, not a transaction).
+    final wallets = await getWalletsSync(groupId);
+    final memberScope =
+        normalizedMember != null && normalizedMember.isNotEmpty;
+    List<WalletModel> relevant;
+    if (memberScope) {
+      final members = await getMembersSync(groupId);
+      String? memberId;
+      for (final m in members) {
+        final mn = CategoryUtils.normalize(m.name);
+        if (mn.isNotEmpty &&
+            (mn.contains(normalizedMember) || normalizedMember.contains(mn))) {
+          memberId = m.id;
+          break;
+        }
+      }
+      relevant = memberId == null
+          ? <WalletModel>[]
+          : wallets
+              .where((w) => w.isMemberWallet && w.ownerId == memberId)
+              .toList();
+    } else {
+      relevant = wallets;
+    }
+    final balance = relevant.fold<double>(0.0, (s, w) => s + w.balance);
+    var funded = 0.0;
+    for (final w in relevant) {
+      final entries = await getWalletEntriesSync(groupId, w.id);
+      for (final e in entries) {
+        if (!e.isDebit || e.at.isBefore(since)) continue;
+        if (memberScope || e.source == 'opening' || e.source == 'injection') {
+          funded += e.amount;
+        }
+      }
+    }
+
     final title = memberName == null || memberName.trim().isEmpty
         ? 'تقرير العائلة'
         : 'تقرير ${memberName.trim()}';
@@ -1624,9 +1662,9 @@ class DatabaseService {
                 : 'آخر $days يوم';
     final lines = <String>[
       '📊 $title — $period',
-      'إجمالي الدخل: ${income.toStringAsFixed(0)} ج',
+      'إجمالي التمويل: ${funded.toStringAsFixed(0)} ج',
       'إجمالي المصروفات: ${expenses.toStringAsFixed(0)} ج',
-      'الصافي: ${(income - expenses).toStringAsFixed(0)} ج',
+      'الرصيد الحالي: ${balance.toStringAsFixed(0)} ج',
     ];
 
     if (top.isNotEmpty) {
