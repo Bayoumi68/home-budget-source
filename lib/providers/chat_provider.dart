@@ -81,8 +81,19 @@ class ChatProvider extends ChangeNotifier {
     }
     final totalExpense = results.fold<double>(
         0, (sum, item) => sum + (item['amount'] as double));
-    final warning = _validateTeamBalance(team, totalExpense);
-    if (warning != null) return warning;
+    // Teams have no pot: the member spends from their OWN wallet.
+    WalletModel? wallet;
+    try {
+      for (final w in await _db.getWalletsSync(groupId)) {
+        if (w.isMemberWallet && w.ownerId == user.id) {
+          wallet = w;
+          break;
+        }
+      }
+    } catch (_) {}
+    if (wallet != null && totalExpense > wallet.balance + 0.005) {
+      return 'الرصيد غير كافٍ في محفظتك. المتاح ${wallet.balance.toStringAsFixed(0)} ج.';
+    }
     try {
       final categories = await _db.getExpenseCategoriesSync(groupId);
       final budgets = await _db.getBudgetsSync(groupId);
@@ -97,7 +108,8 @@ class ChatProvider extends ChangeNotifier {
         );
       }
     } catch (_) {}
-    return _sendTeamParsedEntries(groupId, user, text, results, team: team);
+    return _sendTeamParsedEntries(groupId, user, text, results,
+        team: team, wallet: wallet);
   }
 
   @override
@@ -223,15 +235,6 @@ class ChatProvider extends ChangeNotifier {
           user.monthlyLimit > 0 &&
           user.currentSpending + amount > user.monthlyLimit;
       aiResult['overCap'] = overCap;
-
-      if (isExpense && team != null) {
-        final warning = _validateTeamBalance(team, amount);
-        if (warning != null) {
-          await _sendSystemMessage(groupId, warning);
-          await refreshMessages(groupId);
-          return warning;
-        }
-      }
     }
 
     if (aiResult != null && team != null && aiResult['isExpense'] == true) {
@@ -594,12 +597,6 @@ class ChatProvider extends ChangeNotifier {
         user.currentSpending + totalExpense > user.monthlyLimit;
 
     if (team != null && hasExpense) {
-      final warning = _validateTeamBalance(team, totalExpense);
-      if (warning != null) {
-        await _sendSystemMessage(groupId, warning);
-        await refreshMessages(groupId);
-        return warning;
-      }
       return _sendTeamParsedEntries(
         groupId,
         user,
@@ -682,14 +679,6 @@ class ChatProvider extends ChangeNotifier {
     return null;
   }
 
-  String? _validateTeamBalance(TeamModel team, double newExpense) {
-    if (team.balance <= 0) {
-      return '⚠️ رصيد فريق ${team.name} غير كافي. زوّد رصيد الفريق قبل تسجيل المصروف.';
-    }
-    if (newExpense <= team.balance) return null;
-    return '⚠️ رصيد فريق ${team.name} غير كافي. المتاح ${team.balance.toStringAsFixed(0)} ج والمصروف ${newExpense.toStringAsFixed(0)} ج.';
-  }
-
   Future<String?> _sendTeamParsedEntries(
     String groupId,
     UserModel user,
@@ -718,7 +707,6 @@ class ChatProvider extends ChangeNotifier {
         teamName: team.name,
       );
       await _db.addTransaction(transaction);
-      await _db.applyTeamBalanceDelta(groupId, team.id, -amount);
       if (wallet != null) {
         await _db.applyWalletDelta(
           groupId,

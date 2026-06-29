@@ -679,7 +679,6 @@ class DatabaseService {
     String groupId, {
     required String name,
     required UserModel owner,
-    required double balance,
     List<UserModel> members = const [],
   }) async {
     final clean = name.trim().isEmpty ? 'فريق جديد' : name.trim();
@@ -695,7 +694,6 @@ class DatabaseService {
       name: clean,
       ownerId: owner.id,
       ownerName: owner.name,
-      balance: balance,
       memberIds: selected.keys.toList(),
       memberNames: selected.map((id, member) => MapEntry(id, member.name)),
       memberPhones: selected.map((id, member) => MapEntry(
@@ -713,7 +711,6 @@ class DatabaseService {
     String groupId,
     TeamModel team, {
     String? name,
-    double? balance,
     List<UserModel>? members,
   }) async {
     final selected = members == null
@@ -742,7 +739,6 @@ class DatabaseService {
           };
     await _teams(groupId).doc(team.id).set({
       if (name != null) 'name': name.trim().isEmpty ? team.name : name.trim(),
-      if (balance != null) 'balance': balance,
       if (selected != null)
         'memberIds': {...selected.keys, ...externalIds}.toList(),
       if (mergedNames != null) 'memberNames': mergedNames,
@@ -804,15 +800,6 @@ class DatabaseService {
     final txns = q.docs.map((d) => TransactionModel.fromMap(d.data())).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
     return txns;
-  }
-
-  Future<void> applyTeamBalanceDelta(
-      String groupId, String teamId, double delta) async {
-    if (teamId.trim().isEmpty) return;
-    await _teams(groupId).doc(teamId).set({
-      'balance': FieldValue.increment(delta),
-      'updatedAt': DateTime.now().toIso8601String(),
-    }, SetOptions(merge: true));
   }
 
   double spentForTeam(List<TransactionModel> txns) {

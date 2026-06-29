@@ -167,7 +167,7 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'رصيد الفريق: ${_money.format(team.balance)} ج',
+                            'فريق: ${team.name}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 22,
@@ -176,7 +176,7 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
                           ),
                           const SizedBox(height: 4),
                           const Text(
-                            'هذه شاشة فريق فقط. لن تظهر حسابات العائلة هنا.',
+                            'مصروفات الفريق تُخصم من محفظتك الخاصة.',
                             style: TextStyle(color: Colors.white70),
                           ),
                         ],

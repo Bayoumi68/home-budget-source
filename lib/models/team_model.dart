@@ -4,7 +4,6 @@ class TeamModel {
   final String name;
   final String ownerId;
   final String ownerName;
-  final double balance;
   final List<String> memberIds;
   final Map<String, String> memberNames;
   final Map<String, String> memberPhones;
@@ -17,7 +16,6 @@ class TeamModel {
     required this.name,
     required this.ownerId,
     required this.ownerName,
-    this.balance = 0,
     this.memberIds = const [],
     this.memberNames = const {},
     this.memberPhones = const {},
@@ -36,7 +34,6 @@ class TeamModel {
         'name': name,
         'ownerId': ownerId,
         'ownerName': ownerName,
-        'balance': balance,
         'memberIds': memberIds,
         'memberNames': memberNames,
         'memberPhones': memberPhones,
@@ -50,9 +47,6 @@ class TeamModel {
         name: (map['name'] ?? '').toString(),
         ownerId: (map['ownerId'] ?? '').toString(),
         ownerName: (map['ownerName'] ?? '').toString(),
-        balance: (map['balance'] as num?)?.toDouble() ??
-            (map['limit'] as num?)?.toDouble() ??
-            0,
         memberIds:
             (map['memberIds'] as List?)?.map((e) => e.toString()).toList() ??
                 const [],
@@ -74,7 +68,6 @@ class TeamModel {
     String? name,
     String? ownerId,
     String? ownerName,
-    double? balance,
     List<String>? memberIds,
     Map<String, String>? memberNames,
     Map<String, String>? memberPhones,
@@ -87,7 +80,6 @@ class TeamModel {
         name: name ?? this.name,
         ownerId: ownerId ?? this.ownerId,
         ownerName: ownerName ?? this.ownerName,
-        balance: balance ?? this.balance,
         memberIds: memberIds ?? this.memberIds,
         memberNames: memberNames ?? this.memberNames,
         memberPhones: memberPhones ?? this.memberPhones,

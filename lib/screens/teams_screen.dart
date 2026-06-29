@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -11,6 +9,7 @@ import '../models/family_notification_model.dart';
 import '../models/team_model.dart';
 import '../models/transaction_model.dart';
 import '../models/user_model.dart';
+import '../models/wallet_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/database_service.dart';
 
@@ -29,7 +28,19 @@ class _TeamsScreenState extends State<TeamsScreen> {
   String? _error;
   List<UserModel> _members = [];
   List<TeamModel> _teams = [];
+  List<WalletModel> _wallets = [];
   final Map<String, List<TransactionModel>> _teamTxns = {};
+
+  /// A member's own wallet balance (teams are rollups of these).
+  double _memberBalance(String memberId) {
+    for (final w in _wallets) {
+      if (w.isMemberWallet && w.ownerId == memberId) return w.balance;
+    }
+    return 0;
+  }
+
+  double _teamBalance(TeamModel team) =>
+      team.memberIds.fold<double>(0, (s, id) => s + _memberBalance(id));
 
   @override
   void initState() {
@@ -42,7 +53,9 @@ class _TeamsScreenState extends State<TeamsScreen> {
     try {
       final auth = context.read<AuthProvider>();
       final user = auth.user;
+      await _db.provisionMemberWallets(widget.groupId);
       final members = await _db.getMembersSync(widget.groupId);
+      final wallets = await _db.getWalletsSync(widget.groupId);
       final teams = user == null
           ? <TeamModel>[]
           : await _db.getVisibleTeams(widget.groupId, user);
@@ -56,6 +69,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
       if (!mounted) return;
       setState(() {
         _members = members;
+        _wallets = wallets;
         _teams = teams;
         _teamTxns
           ..clear()
@@ -172,6 +186,8 @@ class _TeamsScreenState extends State<TeamsScreen> {
     }
     final canManage = _canManageTeam(team);
 
+    final rollup = _teamBalance(team);
+
     return Card(
       margin: const EdgeInsets.only(bottom: 14),
       child: ExpansionTile(
@@ -179,31 +195,25 @@ class _TeamsScreenState extends State<TeamsScreen> {
         title: Text(team.name,
             style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(
-            'الرصيد: ${_money.format(team.balance)} ج - إجمالي المصروفات: ${_money.format(spent)} ج'),
+            'إجمالي أرصدة الأعضاء: ${_money.format(rollup)} ج — صرفوا: ${_money.format(spent)} ج'),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         children: [
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.account_balance_wallet_rounded),
-            title: Text('رصيد الفريق الحالي: ${_money.format(team.balance)} ج'),
-            subtitle: const Text('يمكن زيادة الرصيد من تعديل الفريق'),
-          ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final entry in byMember.entries)
-                  ActionChip(
-                    avatar: const Icon(Icons.person_rounded, size: 18),
-                    label:
-                        Text('${entry.key}: ${_money.format(entry.value)} ج'),
-                    onPressed: () => _showMemberTeamDetails(team, entry.key),
-                  ),
-              ],
-            ),
-          ),
+          // Rollup: one line per member = their own wallet balance (+ spend).
+          ...team.memberIds.map((id) {
+            final name = _teamMemberName(team, id);
+            final bal = _memberBalance(id);
+            final memberSpent = byMember[name] ?? 0;
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              leading: const Icon(Icons.person_rounded),
+              title: Text(name),
+              subtitle: Text('صرف: ${_money.format(memberSpent)} ج'),
+              trailing: Text('الرصيد ${_money.format(bal)} ج',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () => _showMemberTeamDetails(team, name),
+            );
+          }),
           const SizedBox(height: 10),
           _buildMembersSection(team, canManage),
           const Divider(height: 24),
@@ -319,10 +329,6 @@ class _TeamsScreenState extends State<TeamsScreen> {
     final owner = auth.user;
     if (owner == null) return;
     final nameController = TextEditingController(text: team?.name ?? '');
-    final balanceController = TextEditingController(
-        text: team == null || team.balance <= 0
-            ? ''
-            : team.balance.toStringAsFixed(0));
     final selectedIds = <String>{
       owner.id,
       ...?team?.memberIds,
@@ -345,19 +351,9 @@ class _TeamsScreenState extends State<TeamsScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: balanceController,
-                  keyboardType: TextInputType.number,
-                  textDirection: ui.TextDirection.ltr,
-                  decoration: const InputDecoration(
-                    labelText: 'رصيد الفريق',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
                 const Align(
                   alignment: Alignment.centerRight,
-                  child: Text('الأعضاء',
+                  child: Text('الأعضاء (من أفراد العائلة)',
                       style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
                 ..._members.map(
@@ -395,18 +391,15 @@ class _TeamsScreenState extends State<TeamsScreen> {
       ),
     );
     nameController.dispose();
-    balanceController.dispose();
     if (saved != true) return;
 
     final selectedMembers =
         _members.where((member) => selectedIds.contains(member.id)).toList();
-    final balance = double.tryParse(balanceController.text.trim()) ?? 0;
     if (team == null) {
       await _db.addTeam(
         widget.groupId,
         name: nameController.text,
         owner: owner,
-        balance: balance,
         members: selectedMembers,
       );
     } else {
@@ -414,7 +407,6 @@ class _TeamsScreenState extends State<TeamsScreen> {
         widget.groupId,
         team,
         name: nameController.text,
-        balance: balance,
         members: selectedMembers,
       );
     }
@@ -442,9 +434,6 @@ class _TeamsScreenState extends State<TeamsScreen> {
     );
     if (ok != true) return;
     final deleted = await _db.deleteTransaction(widget.groupId, txn.id);
-    if (deleted != null) {
-      await _db.applyTeamBalanceDelta(widget.groupId, team.id, deleted.amount);
-    }
     if (deleted?.walletId != null && deleted!.walletId!.isNotEmpty) {
       final actor = context.read<AuthProvider>().user;
       await _db.applyWalletDelta(
@@ -534,8 +523,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
         'اكتب رقم تليفونك للدخول.\n'
         'لو التطبيق طلب كود الدعوة استخدم هذا الكود فقط:\n$code\n\n'
         'لو أول مرة تستخدم التطبيق اكتب اسمك أيضًا.\n'
-        'بعد الدخول ستجد الفريق في زر "الفرق".\n'
-        'رصيد الفريق الحالي: ${team.balance.toStringAsFixed(0)} ج';
+        'بعد الدخول ستجد الفريق في زر "الفرق".';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =
         Uri.parse('https://wa.me/?text=${Uri.encodeComponent(message)}');
