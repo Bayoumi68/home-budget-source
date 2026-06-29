@@ -25,6 +25,17 @@ class GroupSettingsScreen extends StatefulWidget {
 class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
   final _db = DatabaseService();
 
+  // Cache each wallet's ledger future so rebuilds don't refetch (which caused
+  // the flicker). Keyed by wallet + its last-updated stamp, so it only reloads
+  // when that wallet actually changed.
+  final Map<String, Future<List<WalletEntryModel>>> _entryFutures = {};
+
+  Future<List<WalletEntryModel>> _entriesFor(WalletModel w) {
+    final key = '${w.id}|${w.updatedAt?.toIso8601String() ?? ''}|${w.balance}';
+    return _entryFutures.putIfAbsent(
+        key, () => _db.getWalletEntriesSync(widget.groupId, w.id));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -899,6 +910,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
+          key: PageStorageKey('walletgroup_$title'),
+          maintainState: true,
           initiallyExpanded: initiallyExpanded,
           tilePadding: const EdgeInsets.symmetric(horizontal: 12),
           leading: const Icon(Icons.account_balance_wallet_rounded,
@@ -1003,7 +1016,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           ),
         if (hasButtons) const SizedBox(height: 8),
         FutureBuilder<List<WalletEntryModel>>(
-          future: _db.getWalletEntriesSync(widget.groupId, w.id),
+          future: _entriesFor(w),
           builder: (ctx, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
               return const Padding(
