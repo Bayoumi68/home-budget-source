@@ -64,14 +64,23 @@ class _SplashScreenState extends State<SplashScreen> {
     }
 
     if (auth.isLoggedIn && auth.group != null) {
-      Navigator.pushReplacementNamed(
-        context,
-        '/chat',
-        arguments: {
-          'groupId': auth.group!.id,
-          'groupName': auth.group!.name,
-        },
-      );
+      if (auth.isTeamOnly && (auth.teamId ?? '').isNotEmpty) {
+        // Workers restore straight into their team-only view.
+        Navigator.pushReplacementNamed(
+          context,
+          '/team-home',
+          arguments: {'groupId': auth.group!.id, 'teamId': auth.teamId},
+        );
+      } else {
+        Navigator.pushReplacementNamed(
+          context,
+          '/chat',
+          arguments: {
+            'groupId': auth.group!.id,
+            'groupName': auth.group!.name,
+          },
+        );
+      }
     } else {
       Navigator.pushReplacementNamed(context, '/auth');
     }

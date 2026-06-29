@@ -890,7 +890,9 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     }
 
     final adminWallets = budget.wallets.where((w) => w.isAdminWallet).toList();
-    final memberWallets = budget.wallets.where((w) => w.isMemberWallet).toList();
+    // Family-member wallets only — workers' wallets live under الفرق, not here.
+    final memberWallets =
+        budget.wallets.where((w) => w.isFamilyMemberWallet).toList();
     return Column(
       children: [
         _walletsGroupCard(

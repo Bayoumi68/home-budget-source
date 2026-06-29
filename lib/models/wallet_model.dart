@@ -15,6 +15,9 @@ class WalletModel {
   // member's pocket. ownerId is the member's user id for member wallets.
   final String ownerType;
   final String? ownerId;
+  // Non-empty = this wallet belongs to a WORKER in that team (not a family
+  // member). Family views filter these out; teams show them.
+  final String? teamId;
 
   WalletModel({
     required this.id,
@@ -29,10 +32,15 @@ class WalletModel {
     this.updatedByPhone,
     this.ownerType = 'admin',
     this.ownerId,
+    this.teamId,
   });
 
   bool get isMemberWallet => ownerType == 'member';
   bool get isAdminWallet => ownerType == 'admin';
+
+  /// A worker's wallet (belongs to a team), not a family member's.
+  bool get isWorkerWallet => (teamId ?? '').trim().isNotEmpty;
+  bool get isFamilyMemberWallet => isMemberWallet && !isWorkerWallet;
 
   /// "Name (phone)" of whoever last touched the wallet, or a dash.
   String get updatedByLabel {
@@ -57,6 +65,7 @@ class WalletModel {
         'updatedByPhone': updatedByPhone,
         'ownerType': ownerType,
         'ownerId': ownerId,
+        'teamId': teamId,
       };
 
   factory WalletModel.fromMap(Map<String, dynamic> map) => WalletModel(
@@ -72,6 +81,7 @@ class WalletModel {
         updatedByPhone: map['updatedByPhone'],
         ownerType: (map['ownerType'] ?? 'admin').toString(),
         ownerId: map['ownerId'],
+        teamId: map['teamId'],
       );
 
   WalletModel copyWith({
@@ -87,6 +97,7 @@ class WalletModel {
     String? updatedByPhone,
     String? ownerType,
     String? ownerId,
+    String? teamId,
   }) =>
       WalletModel(
         id: id ?? this.id,
@@ -101,5 +112,6 @@ class WalletModel {
         updatedByPhone: updatedByPhone ?? this.updatedByPhone,
         ownerType: ownerType ?? this.ownerType,
         ownerId: ownerId ?? this.ownerId,
+        teamId: teamId ?? this.teamId,
       );
 }

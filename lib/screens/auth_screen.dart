@@ -252,6 +252,14 @@ class _AuthScreenState extends State<AuthScreen> {
     final auth = context.read<AuthProvider>();
     final group = auth.group;
     if (group == null || !mounted) return;
+    if (auth.isTeamOnly && (auth.teamId ?? '').isNotEmpty) {
+      // A worker enters their team-only view, never the family.
+      Navigator.pushReplacementNamed(context, '/team-home', arguments: {
+        'groupId': group.id,
+        'teamId': auth.teamId,
+      });
+      return;
+    }
     Navigator.pushReplacementNamed(context, '/chat', arguments: {
       'groupId': group.id,
       'groupName': group.name,

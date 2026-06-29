@@ -454,13 +454,16 @@ class DatabaseService {
             ? 'u_${_docSafeId(authUid)}'
             : _authService.memberIdForPhone(normalizedPhone));
 
+    // A team code makes the joiner a WORKER of that team (not a family member).
+    final isWorker = teamId.isNotEmpty;
     final base = existing ??
         UserModel(
           id: memberId,
           name: name,
           phone: normalizedPhone.isEmpty ? null : normalizedPhone,
+          teamId: isWorker ? teamId : null,
           canAddExpenses: true,
-          canViewReports: true,
+          canViewReports: !isWorker,
           canManageMembers: false,
           canManageBudgets: false,
         );
@@ -468,6 +471,7 @@ class DatabaseService {
       id: memberId,
       name: base.name.trim().isEmpty ? name : base.name,
       phone: normalizedPhone.isEmpty ? base.phone : normalizedPhone,
+      teamId: isWorker ? teamId : base.teamId,
       authUid: authUid,
       email: email,
       phoneVerified: true,
@@ -825,6 +829,19 @@ class DatabaseService {
     }, SetOptions(merge: true));
   }
 
+  /// Remove a worker from a team and delete their worker record + archive their
+  /// wallet (workers belong to the team, not the family).
+  Future<void> removeWorker(
+      String groupId, TeamModel team, String workerId) async {
+    await removeTeamMember(groupId, team, workerId);
+    await _members(groupId).doc(workerId).delete();
+    final wid = 'mem_${_docSafeId(workerId)}';
+    await _wallets(groupId).doc(wid).set({
+      'archived': true,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
   Future<void> removeTeamMember(
       String groupId, TeamModel team, String userId) async {
     final ids = team.memberIds.where((id) => id != userId).toList();
@@ -1048,11 +1065,58 @@ class DatabaseService {
         'archived': false,
         'ownerType': 'member',
         'ownerId': m.id,
+        // Tag worker wallets so family views can exclude them.
+        'teamId': m.teamId ?? '',
         'ledgerStarted': false,
         'createdAt': now,
         'updatedAt': now,
       }, SetOptions(merge: true));
     }
+  }
+
+  /// Family-only members (excludes workers). Use in family lists/reports.
+  Future<List<UserModel>> getFamilyMembersSync(String groupId) async {
+    final all = await getMembersSync(groupId);
+    return all.where((m) => !m.isWorker).toList();
+  }
+
+  /// Workers belonging to a team (their own member docs, not family members).
+  Future<List<UserModel>> getTeamWorkers(String groupId, String teamId) async {
+    final all = await getMembersSync(groupId);
+    return all.where((m) => m.teamId == teamId).toList();
+  }
+
+  /// Admin adds a worker to a team (NOT a family member). Creates the worker's
+  /// member doc (teamId-tagged), provisions their wallet, links them to the team.
+  Future<UserModel> addWorker(
+    String groupId,
+    String teamId, {
+    required String name,
+    String? phone,
+  }) async {
+    final normalizedPhone = (phone ?? '').trim().isEmpty
+        ? ''
+        : _authService.normalizePhone(phone!.trim());
+    final id = normalizedPhone.isEmpty
+        ? 'wrk_${_docSafeId('${teamId}_${DateTime.now().millisecondsSinceEpoch}')}'
+        : _authService.memberIdForPhone(normalizedPhone);
+    final worker = UserModel(
+      id: id,
+      name: name.trim().isEmpty ? 'عامل' : name.trim(),
+      phone: normalizedPhone.isEmpty ? null : normalizedPhone,
+      teamId: teamId,
+      canAddExpenses: true,
+      canViewReports: false,
+      canManageMembers: false,
+      canManageBudgets: false,
+    );
+    await _members(groupId).doc(worker.id).set({
+      ...worker.toMap(),
+      'createdAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+    await provisionMemberWallets(groupId);
+    await addTeamMember(groupId, teamId, worker);
+    return worker;
   }
 
   /// Move [amount] between two wallets (admin funding/withdrawal): CR the

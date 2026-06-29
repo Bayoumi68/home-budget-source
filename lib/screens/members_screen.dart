@@ -32,7 +32,8 @@ class _MembersScreenState extends State<MembersScreen> {
   }
 
   Future<void> _loadMembers() async {
-    final members = await _db.getMembersSync(widget.groupId);
+    // Family members only — workers belong to teams, not the family list.
+    final members = await _db.getFamilyMembersSync(widget.groupId);
     if (mounted) setState(() => _members = members);
   }
 

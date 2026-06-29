@@ -180,8 +180,16 @@ class AuthProvider extends ChangeNotifier {
     return _db.getMembershipsByAuthUid(uid);
   }
 
-  Future<void> openMembership(FamilyMembership membership) =>
-      setSession(membership.member, membership.group);
+  Future<void> openMembership(FamilyMembership membership) async {
+    final m = membership.member;
+    if (m.isWorker) {
+      // A worker enters a team-only view of their own data, never the family.
+      final team = await _db.getTeamById(membership.group.id, m.teamId!);
+      await setSession(m, membership.group, team: team, teamOnly: true);
+    } else {
+      await setSession(m, membership.group);
+    }
+  }
 
   // ─── Session ───
 
@@ -225,10 +233,18 @@ class AuthProvider extends ChangeNotifier {
       );
       _user = chosen.member;
       _group = chosen.group;
-      _team = null;
-      _teamId = null;
-      _teamOnly = false;
-      await _db.saveActiveSession(_user!, _group!);
+      if (chosen.member.isWorker) {
+        // Restore a worker straight into their team-only view.
+        _team = await _db.getTeamById(chosen.group.id, chosen.member.teamId!);
+        _teamId = chosen.member.teamId;
+        _teamOnly = true;
+      } else {
+        _team = null;
+        _teamId = null;
+        _teamOnly = false;
+      }
+      await _db.saveActiveSession(_user!, _group!,
+          teamId: _teamId, teamOnly: _teamOnly);
     }
     _loading = false;
     notifyListeners();

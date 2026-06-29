@@ -88,7 +88,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       if (auth.user?.isAdmin == true) {
         try {
-          final members = await _db.getMembersSync(widget.groupId);
+          final members = await _db.getFamilyMembersSync(widget.groupId);
           if (mounted) setState(() => _members = members);
         } catch (_) {}
       }

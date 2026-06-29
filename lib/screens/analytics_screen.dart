@@ -116,9 +116,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         .where((t) => effectiveUserId == null || t.userId == effectiveUserId)
         .where((t) => _inPeriod(t.date))
         .toList();
+    // Family reports exclude workers' wallets (workers are reported under الفرق).
     final scopedWallets = budget.wallets
         .where((w) => effectiveUserId == null
-            ? true
+            ? !w.isWorkerWallet
             : (w.isMemberWallet && w.ownerId == effectiveUserId))
         .toList();
 
@@ -379,7 +380,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     for (final t in txns.where((t) => t.isExpense)) {
       spentByUser[t.userId] = (spentByUser[t.userId] ?? 0) + t.amount;
     }
-    final members = _members.where((m) => !m.isAdmin).toList();
+    final members =
+        _members.where((m) => !m.isAdmin && !m.isWorker).toList();
     if (members.isEmpty) return _empty('لا يوجد أعضاء');
     return Column(
       children: members.map((m) {
@@ -419,7 +421,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     for (final t in txns.where((t) => t.isExpense && t.walletId != null)) {
       spentByWallet[t.walletId!] = (spentByWallet[t.walletId!] ?? 0) + t.amount;
     }
-    final active = wallets.where((w) => !w.archived).toList();
+    final active =
+        wallets.where((w) => !w.archived && !w.isWorkerWallet).toList();
     if (active.isEmpty) return _empty('لا توجد محافظ');
     return Column(
       children: active.map((w) {

@@ -48,9 +48,13 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final team = await _db.getTeamById(widget.groupId, widget.teamId);
-    final txns = team == null
+    final myId = context.read<AuthProvider>().user?.id;
+    final all = team == null
         ? const <TransactionModel>[]
         : await _db.getTeamTransactions(widget.groupId, widget.teamId);
+    // A worker sees only their OWN expenses, not the whole team's.
+    final txns =
+        myId == null ? all : all.where((t) => t.userId == myId).toList();
     if (!mounted) return;
     setState(() {
       _team = team;

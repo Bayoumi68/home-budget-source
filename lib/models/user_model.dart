@@ -13,6 +13,10 @@ class UserModel {
   final bool canManageBudgets;
   final bool phoneVerified;
   final String? email;
+  // Non-empty = this person is a WORKER belonging to that team, NOT a family
+  // member. Workers are kept out of family lists/privacy; only the admin sees
+  // them (under الفرق), and they log in to a team-only view of their own data.
+  final String? teamId;
   final DateTime createdAt;
 
   UserModel({
@@ -30,6 +34,7 @@ class UserModel {
     bool? canManageBudgets,
     this.phoneVerified = false,
     this.email,
+    this.teamId,
     DateTime? createdAt,
   })  : canAddExpenses = canAddExpenses ?? true,
         canViewReports = canViewReports ?? true,
@@ -40,6 +45,9 @@ class UserModel {
   /// A member is "joined" once a real login (Google/email) is bound to them.
   /// Admin-pre-registered members are pending until then.
   bool get joined => authUid != null && authUid!.isNotEmpty;
+
+  /// A worker belongs to a team and is not part of the family proper.
+  bool get isWorker => (teamId ?? '').trim().isNotEmpty;
 
   String get roleName => isAdmin ? 'قائد العائلة' : 'عضو';
   bool get hasSpendingLimit => monthlyLimit > 0;
@@ -64,6 +72,7 @@ class UserModel {
         'canManageBudgets': canManageBudgets,
         'phoneVerified': phoneVerified,
         'email': email,
+        'teamId': teamId,
         'createdAt': createdAt.toIso8601String(),
       };
 
@@ -84,6 +93,7 @@ class UserModel {
       canManageBudgets: map['canManageBudgets'] ?? isAdmin,
       phoneVerified: map['phoneVerified'] ?? false,
       email: map['email'],
+      teamId: map['teamId'],
       createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
     );
   }
@@ -103,6 +113,7 @@ class UserModel {
     bool? canManageBudgets,
     bool? phoneVerified,
     String? email,
+    String? teamId,
     DateTime? createdAt,
   }) =>
       UserModel(
@@ -120,6 +131,7 @@ class UserModel {
         canManageBudgets: canManageBudgets ?? this.canManageBudgets,
         phoneVerified: phoneVerified ?? this.phoneVerified,
         email: email ?? this.email,
+        teamId: teamId ?? this.teamId,
         createdAt: createdAt ?? this.createdAt,
       );
 }

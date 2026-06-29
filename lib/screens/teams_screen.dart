@@ -31,7 +31,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
   List<WalletModel> _wallets = [];
   final Map<String, List<TransactionModel>> _teamTxns = {};
 
-  /// A member's own wallet balance (teams are rollups of these).
+  /// A worker's own wallet balance (a team is a rollup of these).
   double _memberBalance(String memberId) {
     for (final w in _wallets) {
       if (w.isMemberWallet && w.ownerId == memberId) return w.balance;
@@ -39,8 +39,12 @@ class _TeamsScreenState extends State<TeamsScreen> {
     return 0;
   }
 
+  /// The team's workers (their own member docs, tagged with this team).
+  List<UserModel> _teamWorkers(TeamModel team) =>
+      _members.where((m) => m.teamId == team.id).toList();
+
   double _teamBalance(TeamModel team) =>
-      team.memberIds.fold<double>(0, (s, id) => s + _memberBalance(id));
+      _teamWorkers(team).fold<double>(0, (s, m) => s + _memberBalance(m.id));
 
   @override
   void initState() {
@@ -198,24 +202,55 @@ class _TeamsScreenState extends State<TeamsScreen> {
             'إجمالي أرصدة الأعضاء: ${_money.format(rollup)} ج — صرفوا: ${_money.format(spent)} ج'),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         children: [
-          // Rollup: one line per member = their own wallet balance (+ spend).
-          ...team.memberIds.map((id) {
-            final name = _teamMemberName(team, id);
-            final bal = _memberBalance(id);
-            final memberSpent = byMember[name] ?? 0;
-            return ListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              leading: const Icon(Icons.person_rounded),
-              title: Text(name),
-              subtitle: Text('صرف: ${_money.format(memberSpent)} ج'),
-              trailing: Text('الرصيد ${_money.format(bal)} ج',
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () => _showMemberTeamDetails(team, name),
-            );
-          }),
-          const SizedBox(height: 10),
-          _buildMembersSection(team, canManage),
+          // Rollup: one line per WORKER = their own wallet balance (+ spend).
+          ...(() {
+            final workers = _teamWorkers(team);
+            if (workers.isEmpty) {
+              return [
+                const ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  leading: Icon(Icons.engineering_rounded),
+                  title: Text('لا يوجد عمّال في هذا الفريق بعد'),
+                  subtitle: Text('اضغط "إضافة عامل" أو شارك دعوة الفريق.'),
+                )
+              ];
+            }
+            return workers.map((w) {
+              final memberSpent = byMember[w.name] ?? 0;
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading: const Icon(Icons.engineering_rounded),
+                title: Text(w.name),
+                subtitle: Text('صرف: ${_money.format(memberSpent)} ج'
+                    '${(w.phone ?? '').isEmpty ? '' : ' — ${w.phone}'}'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('الرصيد ${_money.format(_memberBalance(w.id))} ج',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    if (canManage)
+                      PopupMenuButton<String>(
+                        onSelected: (v) {
+                          if (v == 'fund') _fundWorker(team, w, withdraw: false);
+                          if (v == 'withdraw') {
+                            _fundWorker(team, w, withdraw: true);
+                          }
+                          if (v == 'remove') _removeWorker(team, w);
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(value: 'fund', child: Text('تمويل')),
+                          PopupMenuItem(value: 'withdraw', child: Text('سحب')),
+                          PopupMenuItem(value: 'remove', child: Text('إزالة')),
+                        ],
+                      ),
+                  ],
+                ),
+                onTap: () => _showMemberTeamDetails(team, w.name),
+              );
+            }).toList();
+          })(),
           const Divider(height: 24),
           _buildTransactionsSection(team, txns, canManage),
           if (canManage) ...[
@@ -225,14 +260,21 @@ class _TeamsScreenState extends State<TeamsScreen> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
+                  onPressed: () => _addWorkerDialog(team),
+                  icon: const Icon(Icons.person_add_alt_1_rounded),
+                  label: const Text('إضافة عامل'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.incomeGreen),
+                ),
+                OutlinedButton.icon(
                   onPressed: () => _showTeamDialog(team: team),
                   icon: const Icon(Icons.edit_rounded),
-                  label: const Text('تعديل الفريق'),
+                  label: const Text('تعديل الاسم'),
                 ),
                 OutlinedButton.icon(
                   onPressed: () => _shareTeamInvite(team),
                   icon: const Icon(Icons.ios_share_rounded),
-                  label: const Text('مشاركة دعوة الفريق'),
+                  label: const Text('دعوة عامل'),
                 ),
                 OutlinedButton.icon(
                   onPressed: () => _deleteTeam(team),
@@ -247,42 +289,164 @@ class _TeamsScreenState extends State<TeamsScreen> {
     );
   }
 
-  Widget _buildMembersSection(TeamModel team, bool canManage) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final memberId in team.memberIds)
-            Chip(
-              avatar: const Icon(Icons.person_rounded, size: 18),
-              label: Text(_teamMemberName(team, memberId)),
-              deleteIcon: canManage && memberId != team.ownerId
-                  ? const Icon(Icons.close_rounded, size: 18)
-                  : null,
-              onDeleted: canManage && memberId != team.ownerId
-                  ? () => _removeMemberFromTeam(
-                        team,
-                        memberId,
-                        _teamMemberName(team, memberId),
-                      )
-                  : null,
+  Future<void> _addWorkerDialog(TeamModel team) async {
+    final nameController = TextEditingController();
+    final phoneController = TextEditingController();
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('إضافة عامل إلى ${team.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'اسم العامل',
+                border: OutlineInputBorder(),
+              ),
             ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'رقم الموبايل (اختياري)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'العامل ليس من أفراد العائلة — له محفظة خاصة تموّلها أنت فقط.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('إضافة')),
         ],
       ),
     );
+    final name = nameController.text.trim();
+    final phone = phoneController.text.trim();
+    nameController.dispose();
+    phoneController.dispose();
+    if (saved != true || name.isEmpty) return;
+    await _db.addWorker(widget.groupId, team.id,
+        name: name, phone: phone.isEmpty ? null : phone);
+    await _load();
   }
 
-  UserModel? _memberById(String id) {
-    for (final member in _members) {
-      if (member.id == id) return member;
+  Future<void> _fundWorker(TeamModel team, UserModel worker,
+      {required bool withdraw}) async {
+    final adminWallets = _wallets.where((w) => w.isAdminWallet).toList();
+    if (adminWallets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أضف محفظة نقدية لك أولًا من الإعدادات.')),
+      );
+      return;
     }
-    return null;
+    WalletModel? workerWallet;
+    for (final w in _wallets) {
+      if (w.isMemberWallet && w.ownerId == worker.id) {
+        workerWallet = w;
+        break;
+      }
+    }
+    if (workerWallet == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('محفظة العامل غير جاهزة بعد.')),
+      );
+      return;
+    }
+    var source = adminWallets.first;
+    final amountController = TextEditingController();
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: Text(withdraw ? 'سحب من ${worker.name}' : 'تمويل ${worker.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<WalletModel>(
+                initialValue: source,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: withdraw ? 'إلى محفظتي' : 'من محفظتي',
+                  border: const OutlineInputBorder(),
+                ),
+                items: adminWallets
+                    .map((w) => DropdownMenuItem(
+                        value: w,
+                        child: Text(
+                            '${w.name} (${_money.format(w.balance)} ج)')))
+                    .toList(),
+                onChanged: (v) => setDialog(() => source = v ?? source),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amountController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'المبلغ', border: OutlineInputBorder()),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, {
+                'source': source,
+                'amount': double.tryParse(
+                    amountController.text.trim().replaceAll(',', '.')),
+              }),
+              child: Text(withdraw ? 'سحب' : 'تمويل'),
+            ),
+          ],
+        ),
+      ),
+    );
+    amountController.dispose();
+    if (result == null || !mounted) return;
+    final amount = result['amount'] as double?;
+    final src = result['source'] as WalletModel;
+    if (amount == null || amount <= 0) return;
+    final user = context.read<AuthProvider>().user;
+    final error = await _db.transferBetweenWallets(
+      widget.groupId,
+      fromWalletId: withdraw ? workerWallet.id : src.id,
+      toWalletId: withdraw ? src.id : workerWallet.id,
+      amount: amount,
+      byName: user?.name,
+      byPhone: user?.phone,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(error ??
+          (withdraw
+              ? 'تم سحب ${_money.format(amount)} ج من ${worker.name}'
+              : 'تم تمويل ${worker.name} بـ ${_money.format(amount)} ج')),
+    ));
+    await _load();
   }
 
-  String _teamMemberName(TeamModel team, String id) {
-    return _memberById(id)?.name ?? team.memberNames[id] ?? 'عضو فريق';
+  Future<void> _removeWorker(TeamModel team, UserModel worker) async {
+    final ok = await _confirm(
+      'إزالة عامل',
+      'إزالة ${worker.name} من فريق ${team.name}؟ سيتم حذف سجله ومحفظته.',
+    );
+    if (ok != true) return;
+    await _db.removeWorker(widget.groupId, team, worker.id);
+    await _load();
   }
 
   Widget _buildTransactionsSection(
@@ -325,102 +489,51 @@ class _TeamsScreenState extends State<TeamsScreen> {
   }
 
   Future<void> _showTeamDialog({TeamModel? team}) async {
-    final auth = context.read<AuthProvider>();
-    final owner = auth.user;
+    final owner = context.read<AuthProvider>().user;
     if (owner == null) return;
     final nameController = TextEditingController(text: team?.name ?? '');
-    final selectedIds = <String>{
-      owner.id,
-      ...?team?.memberIds,
-    };
-
     final saved = await showDialog<bool>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(team == null ? 'إنشاء فريق' : 'تعديل الفريق'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'اسم الفريق',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Align(
-                  alignment: Alignment.centerRight,
-                  child: Text('الأعضاء (من أفراد العائلة)',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-                ..._members.map(
-                  (member) => CheckboxListTile(
-                    value: selectedIds.contains(member.id),
-                    title: Text(member.name),
-                    subtitle: Text(member.phone ?? ''),
-                    onChanged: member.id == owner.id
-                        ? null
-                        : (checked) {
-                            setDialogState(() {
-                              if (checked == true) {
-                                selectedIds.add(member.id);
-                              } else {
-                                selectedIds.remove(member.id);
-                              }
-                            });
-                          },
-                  ),
-                ),
-              ],
+      builder: (ctx) => AlertDialog(
+        title: Text(team == null ? 'إنشاء فريق' : 'تعديل اسم الفريق'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'اسم الفريق (مثال: العمالة المنزلية)',
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('حفظ'),
+            const SizedBox(height: 6),
+            const Text(
+              'الفريق مجموعة عمّال للعائلة. أضف العمّال من زر "إضافة عامل" بعد الإنشاء.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حفظ'),
+          ),
+        ],
       ),
     );
+    final name = nameController.text;
     nameController.dispose();
     if (saved != true) return;
-
-    final selectedMembers =
-        _members.where((member) => selectedIds.contains(member.id)).toList();
     if (team == null) {
-      await _db.addTeam(
-        widget.groupId,
-        name: nameController.text,
-        owner: owner,
-        members: selectedMembers,
-      );
+      await _db.addTeam(widget.groupId, name: name, owner: owner);
     } else {
-      await _db.updateTeam(
-        widget.groupId,
-        team,
-        name: nameController.text,
-        members: selectedMembers,
-      );
+      await _db.updateTeam(widget.groupId, team, name: name);
     }
-    await _load();
-  }
-
-  Future<void> _removeMemberFromTeam(
-      TeamModel team, String memberId, String memberName) async {
-    final ok = await _confirm(
-      'إزالة عضو',
-      'هل تريد إزالة $memberName من فريق ${team.name}؟',
-    );
-    if (ok != true) return;
-    await _db.removeTeamMember(widget.groupId, team, memberId);
     await _load();
   }
 
