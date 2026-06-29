@@ -1,9 +1,9 @@
-# Budget Home — Setup Script
-# شغّل هذا السكريبت في مجلد budget_home
-# Pascal PowerShell (انقر يمين → Run with PowerShell)
+# Home Budget — Setup Script
+# شغّل هذا السكريبت في مجلد المشروع
+# انقر يمين → Run with PowerShell
 
 Write-Host "==============================" -ForegroundColor Green
-Write-Host " Budget Home - Setup " -ForegroundColor Green
+Write-Host " Home Budget - Setup " -ForegroundColor Green
 Write-Host "==============================" -ForegroundColor Green
 Write-Host ""
 
@@ -22,7 +22,7 @@ Write-Host ""
 
 # ─── 2. إنشاء ملفات Android/iOS ───
 Write-Host "[2/4] إنشاء ملفات المنصات..." -ForegroundColor Cyan
-if (-not (Test-Path "android\build.gradle")) {
+if (-not (Test-Path "android\build.gradle.kts")) {
     flutter create --project-name budget_home .
     if ($LASTEXITCODE -ne 0) {
         Write-Host "❌ فشل إنشاء المشروع" -ForegroundColor Red
@@ -47,19 +47,18 @@ Write-Host "✅ تم تحميل جميع الحزم" -ForegroundColor Green
 Write-Host ""
 
 # ─── 4. تعليمات Firebase ───
-Write-Host "[4/4] إعداد Firebase (يدوي)" -ForegroundColor Cyan
+Write-Host "[4/4] إعداد Firebase" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "┌─────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
-Write-Host "│ خطوة مهمة: إعداد Firebase                               │" -ForegroundColor Yellow
-Write-Host "├─────────────────────────────────────────────────────────┤" -ForegroundColor Yellow
-Write-Host "│ 1. افتح https://console.firebase.google.com            │" -ForegroundColor White
-Write-Host "│ 2. أنشئ مشروع جديد                                     │" -ForegroundColor White
-Write-Host "│ 3. أضف تطبيق Android (com.budget.home)                 │" -ForegroundColor White
-Write-Host "│ 4. حمّل google-services.json                           │" -ForegroundColor White
-Write-Host "│ 5. ضع الملف في: android/app/google-services.json      │" -ForegroundColor White
-Write-Host "│ 6. في Terminal شغّل:                                    │" -ForegroundColor White
-Write-Host "│    dart run firebase_core:configure                    │" -ForegroundColor White
-Write-Host "└─────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
+Write-Host "المشروع موصول بمشروع Firebase: budget-home-bayoumi" -ForegroundColor White
+Write-Host "ملف الويب (lib/firebase_options.dart) محفوظ في git، لكن" -ForegroundColor White
+Write-Host "android/app/google-services.json غير محفوظ (مستبعد في .gitignore)." -ForegroundColor White
+Write-Host "لإعادة توليده — أو لربط مشروع Firebase خاص بك — شغّل:" -ForegroundColor White
+Write-Host "   dart pub global activate flutterfire_cli" -ForegroundColor Magenta
+Write-Host "   firebase login" -ForegroundColor Magenta
+Write-Host "   flutterfire configure --project=budget-home-bayoumi" -ForegroundColor Magenta
+Write-Host ""
+Write-Host "ثم في Firebase Console فعّل طرق الدخول: Google و Email/Password." -ForegroundColor White
+Write-Host "(الحزمة الافتراضية للأندرويد: com.example.budget_home)" -ForegroundColor DarkGray
 Write-Host ""
 
 # ─── 5. تشغيل التطبيق ───
