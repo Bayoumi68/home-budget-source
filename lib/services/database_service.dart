@@ -435,43 +435,40 @@ class DatabaseService {
     final normalizedPhone = (phone ?? '').trim().isEmpty
         ? ''
         : _authService.normalizePhone(phone!.trim());
+    if (normalizedPhone.isEmpty) {
+      throw JoinFamilyException(
+          'اكتب رقم موبايلك للانضمام — يجب أن يطابق الرقم الذي سجّله القائد لك.');
+    }
 
-    // Reuse an existing slot if this login or phone already maps to a member.
-    UserModel? existing;
+    // The joiner must MATCH a slot the admin pre-registered (by phone), exactly
+    // like family members. A returning login reuses its own slot.
+    UserModel? slot;
     try {
       final q = await _members(groupId)
           .where('authUid', isEqualTo: authUid)
           .limit(1)
           .get();
-      if (q.docs.isNotEmpty) existing = UserModel.fromMap(q.docs.first.data());
+      if (q.docs.isNotEmpty) slot = UserModel.fromMap(q.docs.first.data());
     } catch (_) {}
-    if (existing == null && normalizedPhone.isNotEmpty) {
-      existing = await getMemberByPhone(groupId, normalizedPhone);
+    slot ??= await getMemberByPhone(groupId, normalizedPhone);
+
+    if (teamId.isNotEmpty) {
+      // Worker join: must match a worker the admin added to THIS team.
+      if (slot == null || slot.teamId != teamId) {
+        throw JoinFamilyException(
+            'رقمك غير مسجّل كعامل في هذا الفريق. اطلب من القائد إضافتك أولًا.');
+      }
+    } else {
+      // Family join: must match a family member the admin pre-registered.
+      if (slot == null || slot.isWorker) {
+        throw JoinFamilyException(
+            'رقمك غير مسجّل في هذه العائلة. اطلب من القائد إضافتك أولًا.');
+      }
     }
 
-    final memberId = existing?.id ??
-        (normalizedPhone.isEmpty
-            ? 'u_${_docSafeId(authUid)}'
-            : _authService.memberIdForPhone(normalizedPhone));
-
-    // A team code makes the joiner a WORKER of that team (not a family member).
-    final isWorker = teamId.isNotEmpty;
-    final base = existing ??
-        UserModel(
-          id: memberId,
-          name: name,
-          phone: normalizedPhone.isEmpty ? null : normalizedPhone,
-          teamId: isWorker ? teamId : null,
-          canAddExpenses: true,
-          canViewReports: !isWorker,
-          canManageMembers: false,
-          canManageBudgets: false,
-        );
-    final toSave = base.copyWith(
-      id: memberId,
-      name: base.name.trim().isEmpty ? name : base.name,
-      phone: normalizedPhone.isEmpty ? base.phone : normalizedPhone,
-      teamId: isWorker ? teamId : base.teamId,
+    final toSave = slot.copyWith(
+      name: slot.name.trim().isEmpty ? name : slot.name,
+      phone: normalizedPhone,
       authUid: authUid,
       email: email,
       phoneVerified: true,
@@ -480,14 +477,10 @@ class DatabaseService {
         .doc(toSave.id)
         .set(toSave.toMap(), SetOptions(merge: true));
 
+    // Their wallet was created when the admin added them; ensure it exists.
     try {
       await provisionMemberWallets(groupId);
     } catch (_) {}
-    if (teamId.isNotEmpty) {
-      try {
-        await addTeamMember(groupId, teamId, toSave);
-      } catch (_) {}
-    }
 
     await inviteRef.set({
       'used': true,
@@ -1092,14 +1085,11 @@ class DatabaseService {
     String groupId,
     String teamId, {
     required String name,
-    String? phone,
+    required String phone,
   }) async {
-    final normalizedPhone = (phone ?? '').trim().isEmpty
-        ? ''
-        : _authService.normalizePhone(phone!.trim());
-    final id = normalizedPhone.isEmpty
-        ? 'wrk_${_docSafeId('${teamId}_${DateTime.now().millisecondsSinceEpoch}')}'
-        : _authService.memberIdForPhone(normalizedPhone);
+    // Phone is the join key — a worker matches their slot by phone, like family.
+    final normalizedPhone = _authService.normalizePhone(phone.trim());
+    final id = _authService.memberIdForPhone(normalizedPhone);
     final worker = UserModel(
       id: id,
       name: name.trim().isEmpty ? 'عامل' : name.trim(),

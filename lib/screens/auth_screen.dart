@@ -79,8 +79,12 @@ class _AuthScreenState extends State<AuthScreen> {
     final phone = (p['phone'] ?? '').trim();
     final code = (p['invite'] ?? p['code'] ?? '').trim();
     if (groupId.isNotEmpty) _inviteGroupId = groupId;
-    if (phone.isNotEmpty) _invitePhone = phone;
     if (code.isNotEmpty) _inviteCode = code;
+    if (phone.isNotEmpty) {
+      _invitePhone = phone;
+      // Prefill the phone the admin assigned, so the join match just works.
+      if (_phoneController.text.trim().isEmpty) _phoneController.text = phone;
+    }
   }
 
   Future<void> _loadInviteFamilyName() async {
@@ -201,15 +205,18 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _joinByCode() async {
     if (_busy) return;
     final name = _nameController.text.trim();
+    final phone = _phoneController.text.trim();
     if (name.isEmpty) {
       _snack('اكتب اسمك.');
       return;
     }
+    if (phone.isEmpty) {
+      _snack('اكتب رقم موبايلك — يجب أن يطابق الرقم الذي سجّله القائد لك.');
+      return;
+    }
     setState(() => _busy = true);
     final auth = context.read<AuthProvider>();
-    final phone = _phoneController.text.trim();
-    final err =
-        await auth.joinByCode(_inviteCode!, name, phone.isEmpty ? null : phone);
+    final err = await auth.joinByCode(_inviteCode!, name, phone);
     if (mounted) setState(() => _busy = false);
     if (err != null) {
       _snack(err);
@@ -363,15 +370,17 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         ),
         const SizedBox(height: 14),
-        const Text('أدخل اسمك للانضمام. رقم الموبايل اختياري.',
-            style: TextStyle(color: Colors.white70), textAlign: TextAlign.center),
+        const Text(
+            'أدخل اسمك ورقم موبايلك المسجَّل عند القائد للانضمام.',
+            style: TextStyle(color: Colors.white70),
+            textAlign: TextAlign.center),
         const SizedBox(height: 14),
         _whiteField(_nameController, 'اسمك', label: 'الاسم'),
         const SizedBox(height: 12),
         _whiteField(_phoneController, '01012345678',
             keyboardType: TextInputType.phone,
             rtl: false,
-            label: 'رقم موبايلك (اختياري)'),
+            label: 'رقم موبايلك المسجَّل'),
         const SizedBox(height: 18),
         _primaryButton(
             _busy ? null : _joinByCode, Icons.login_rounded, 'انضمام'),

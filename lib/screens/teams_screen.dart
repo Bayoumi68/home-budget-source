@@ -237,11 +237,14 @@ class _TeamsScreenState extends State<TeamsScreen> {
                           if (v == 'withdraw') {
                             _fundWorker(team, w, withdraw: true);
                           }
+                          if (v == 'invite') _inviteWorker(team, w);
                           if (v == 'remove') _removeWorker(team, w);
                         },
                         itemBuilder: (_) => const [
                           PopupMenuItem(value: 'fund', child: Text('تمويل')),
                           PopupMenuItem(value: 'withdraw', child: Text('سحب')),
+                          PopupMenuItem(
+                              value: 'invite', child: Text('دعوة للدخول')),
                           PopupMenuItem(value: 'remove', child: Text('إزالة')),
                         ],
                       ),
@@ -270,11 +273,6 @@ class _TeamsScreenState extends State<TeamsScreen> {
                   onPressed: () => _showTeamDialog(team: team),
                   icon: const Icon(Icons.edit_rounded),
                   label: const Text('تعديل الاسم'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => _shareTeamInvite(team),
-                  icon: const Icon(Icons.ios_share_rounded),
-                  label: const Text('دعوة عامل'),
                 ),
                 OutlinedButton.icon(
                   onPressed: () => _deleteTeam(team),
@@ -311,13 +309,13 @@ class _TeamsScreenState extends State<TeamsScreen> {
               controller: phoneController,
               keyboardType: TextInputType.phone,
               decoration: const InputDecoration(
-                labelText: 'رقم الموبايل (اختياري)',
+                labelText: 'رقم موبايل العامل (إلزامي)',
                 border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 6),
             const Text(
-              'العامل ليس من أفراد العائلة — له محفظة خاصة تموّلها أنت فقط.',
+              'العامل ليس من أفراد العائلة — له محفظة خاصة تموّلها أنت. الرقم إلزامي ليطابقه عند الانضمام.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
@@ -337,9 +335,16 @@ class _TeamsScreenState extends State<TeamsScreen> {
     final phone = phoneController.text.trim();
     nameController.dispose();
     phoneController.dispose();
-    if (saved != true || name.isEmpty) return;
-    await _db.addWorker(widget.groupId, team.id,
-        name: name, phone: phone.isEmpty ? null : phone);
+    if (saved != true) return;
+    if (name.isEmpty || phone.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('اكتب اسم العامل ورقم موبايله.')),
+        );
+      }
+      return;
+    }
+    await _db.addWorker(widget.groupId, team.id, name: name, phone: phone);
     await _load();
   }
 
@@ -618,16 +623,17 @@ class _TeamsScreenState extends State<TeamsScreen> {
     );
   }
 
-  Future<void> _shareTeamInvite(TeamModel team) async {
+  Future<void> _inviteWorker(TeamModel team, UserModel worker) async {
     final code =
         await _db.createInvite(groupId: widget.groupId, teamId: team.id);
     if (!mounted) return;
+    final phoneParam = Uri.encodeComponent(worker.phone ?? '');
     final link =
-        '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&teamId=${team.id}&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'دعوة للانضمام إلى فريق ${team.name} داخل Home Budget.\n\n'
+        '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&teamId=${team.id}&phone=$phoneParam&v=${Uri.encodeComponent(AppConstants.appVersion)}';
+    final message = 'دعوة ${worker.name} للانضمام كعامل في فريق ${team.name}.\n\n'
         'افتح الرابط وادخل اسمك للانضمام:\n$link\n\n'
-        'هذا الرابط للاستخدام مرة واحدة فقط (كود: $code).\n'
-        'بعد الدخول ستجد الفريق في زر "الفرق".';
+        'رقمك المسجّل: ${worker.phone ?? ''}\n'
+        'هذا الرابط للاستخدام مرة واحدة فقط (كود: $code).';
     await Clipboard.setData(ClipboardData(text: message));
     final uri =
         Uri.parse('https://wa.me/?text=${Uri.encodeComponent(message)}');
