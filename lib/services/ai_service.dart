@@ -360,6 +360,50 @@ class AIService {
     return score.clamp(0.0, 1.0).toDouble();
   }
 
+  // Normalized phrases that mean "put cash INTO a wallet" (a top-up, not income
+  // and not an expense). Normalization already maps ة→ه and ى→ي.
+  static const _walletInjectionKeywords = [
+    'حط في المحفظه',
+    'حط المحفظه',
+    'حط بالمحفظه',
+    'حط فلوس في المحفظه',
+    'نقديه وارده',
+    'نقدية وارده',
+    'وارد',
+    'ايداع',
+    'اودعت',
+    'اضف للمحفظه',
+    'ضيف للمحفظه',
+    'اضافه للمحفظه',
+    'شحن المحفظه',
+    'شحنت المحفظه',
+    'زود المحفظه',
+    'فلوس داخله',
+    'دخلت المحفظه',
+    'تعبئه محفظه',
+    'اضف رصيد',
+    'اضافه رصيد',
+  ];
+
+  /// Detects a "cash into wallet" message and returns `{amount, note, walletHint}`,
+  /// or null. The amount is required; walletHint is any text after "محفظة".
+  static Map<String, dynamic>? parseWalletInjection(String text) {
+    final original = text.trim();
+    if (original.isEmpty) return null;
+    final normalized = _normalize(original);
+    if (!_walletInjectionKeywords.any(normalized.contains)) return null;
+    final amount = _extractAmount(normalized);
+    if (amount == null || amount <= 0 || amount > 999999999) return null;
+    String? walletHint;
+    final m = RegExp(r'محفظه\s+([؀-ۿ]+)').firstMatch(normalized);
+    if (m != null) walletHint = m.group(1)?.trim();
+    return {
+      'amount': amount,
+      'note': original,
+      'walletHint': walletHint,
+    };
+  }
+
   static bool isNextReportCommand(String text) {
     final normalized = _normalize(text);
     return normalized == 'التالي' ||

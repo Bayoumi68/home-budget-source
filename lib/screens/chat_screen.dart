@@ -21,6 +21,7 @@ import '../services/voice_service.dart';
 import '../services/ai_service.dart';
 import '../services/database_service.dart';
 import '../services/local_notice_service.dart';
+import '../utils/category_utils.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
 import 'members_screen.dart';
@@ -223,6 +224,49 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) setState(() => _isRecording = false);
     }
 
+    // "Cash into wallet" (top-up) — handled before expense parsing.
+    final injection = AIService.parseWalletInjection(text);
+    if (injection != null) {
+      final wallet = await _pickWalletForInjection(
+        hint: injection['walletHint'] as String?,
+      );
+      if (wallet == null || wallet == _walletSelectionCancelled) {
+        _putTextInInput(text);
+        _lastSubmittedText = null;
+        _lastSubmittedAt = null;
+        if (mounted) setState(() => _isSending = false);
+        return;
+      }
+      final auth = context.read<AuthProvider>();
+      if (auth.user == null) {
+        if (mounted) setState(() => _isSending = false);
+        return;
+      }
+      _textController.clear();
+      setState(() => _lastParsedPreview = null);
+      try {
+        final chat = context.read<ChatProvider>();
+        final warning = await chat.injectToWallet(
+          widget.groupId,
+          auth.user!,
+          injection['amount'] as double,
+          wallet,
+          note: text,
+        );
+        await chat.refreshMessages(widget.groupId);
+        await context.read<BudgetProvider>().refreshData(widget.groupId);
+        if (mounted && warning != null) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(warning)));
+        }
+      } finally {
+        _voiceText = '';
+        if (mounted) setState(() => _isSending = false);
+      }
+      _scrollToBottom();
+      return;
+    }
+
     final multiExpenses = AIService.parseExpenseMessages(text);
     final totalExpense = multiExpenses
         .where((item) => item['isExpense'] == true)
@@ -374,6 +418,62 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Text('قيمة المصروف: ${amount.toStringAsFixed(0)} ج'),
             const SizedBox(height: 8),
+            ...wallets.map(
+              (wallet) => RadioListTile<WalletModel>(
+                value: wallet,
+                groupValue: null,
+                onChanged: (value) => Navigator.pop(ctx, value),
+                title: Text(wallet.name),
+                subtitle:
+                    Text('الرصيد: ${wallet.balance.toStringAsFixed(0)} ج'),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, _walletSelectionCancelled),
+            child: const Text('إلغاء'),
+          ),
+        ],
+      ),
+    );
+    return selected ?? _walletSelectionCancelled;
+  }
+
+  /// Pick a wallet to top up. Unlike expenses, all wallets are eligible.
+  /// Returns the wallet, [_walletSelectionCancelled] on cancel, or null if
+  /// there are no wallets at all.
+  Future<WalletModel?> _pickWalletForInjection({String? hint}) async {
+    final budget = context.read<BudgetProvider>();
+    final wallets = budget.wallets.toList();
+    if (wallets.isEmpty) return null;
+
+    if (hint != null && hint.trim().isNotEmpty) {
+      final hintKey = CategoryUtils.key(hint);
+      for (final w in wallets) {
+        final nameKey = CategoryUtils.key(w.name);
+        if (nameKey.isNotEmpty &&
+            (nameKey.contains(hintKey) || hintKey.contains(nameKey))) {
+          return w;
+        }
+      }
+    }
+
+    if (wallets.length == 1) return wallets.first;
+    wallets.sort((a, b) {
+      if (a.isDefault && !b.isDefault) return -1;
+      if (!a.isDefault && b.isDefault) return 1;
+      return a.name.compareTo(b.name);
+    });
+    if (!mounted) return _walletSelectionCancelled;
+    final selected = await showDialog<WalletModel>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تضيف الفلوس في أي محفظة؟'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             ...wallets.map(
               (wallet) => RadioListTile<WalletModel>(
                 value: wallet,

@@ -9,6 +9,7 @@ import '../models/budget_model.dart';
 import '../models/group_model.dart';
 import '../models/family_notification_model.dart';
 import '../models/wallet_model.dart';
+import '../models/wallet_entry_model.dart';
 import '../models/team_model.dart';
 import '../config/constants.dart';
 import '../services/auth_service.dart';
@@ -917,6 +918,10 @@ class DatabaseService {
   }
 
   // ─── Wallets ───
+  CollectionReference<Map<String, dynamic>> _walletEntries(
+          String groupId, String walletId) =>
+      _wallets(groupId).doc(walletId).collection('entries');
+
   Future<List<WalletModel>> getWalletsSync(String groupId) async {
     final q = await _wallets(groupId).get();
     final defaultRef = _wallets(groupId).doc('default');
@@ -934,14 +939,17 @@ class DatabaseService {
     }
 
     final latest = await _wallets(groupId).get();
-    final wallets = latest.docs.map((d) {
-      final data = d.data();
-      return WalletModel.fromMap({
-        ...data,
-        'id': (data['id'] ?? d.id).toString(),
-        'name': (data['name'] ?? d.id).toString(),
-      });
-    }).toList();
+    final wallets = latest.docs
+        .map((d) {
+          final data = d.data();
+          return WalletModel.fromMap({
+            ...data,
+            'id': (data['id'] ?? d.id).toString(),
+            'name': (data['name'] ?? d.id).toString(),
+          });
+        })
+        .where((w) => !w.archived)
+        .toList();
     wallets.sort((a, b) {
       if (a.isDefault && !b.isDefault) return -1;
       if (!a.isDefault && b.isDefault) return 1;
@@ -950,35 +958,238 @@ class DatabaseService {
     return wallets;
   }
 
-  Future<void> addWallet(String groupId, String name, double balance) async {
+  /// Create a wallet. If [balance] is non-zero it is recorded as an opening
+  /// ledger entry so the child table reconciles from day one.
+  Future<void> addWallet(
+    String groupId,
+    String name, {
+    String description = '',
+    double balance = 0,
+    String? byName,
+    String? byPhone,
+  }) async {
     final clean = name.trim().isEmpty ? 'محفظة جديدة' : name.trim();
     final id = _docSafeId(clean);
     final now = DateTime.now().toIso8601String();
     await _wallets(groupId).doc(id).set({
       'id': id,
       'name': clean,
-      'balance': balance,
+      'description': description.trim(),
+      'balance': 0,
       'isDefault': false,
+      'archived': false,
+      'ledgerStarted': false,
       'createdAt': now,
       'updatedAt': now,
+      'updatedByName': byName,
+      'updatedByPhone': byPhone,
     }, SetOptions(merge: true));
+    if (balance != 0) {
+      await postWalletEntry(
+        groupId,
+        id,
+        direction: balance >= 0 ? 'DR' : 'CR',
+        amount: balance.abs(),
+        source: 'opening',
+        note: 'رصيد افتتاحي',
+        byName: byName,
+        byPhone: byPhone,
+      );
+    }
   }
 
-  Future<void> updateWalletBalance(
-      String groupId, String walletId, double balance) async {
-    await _wallets(groupId).doc(walletId).set({
-      'balance': balance,
+  /// Rename / re-describe a wallet. The wallet id stays stable.
+  Future<void> updateWallet(
+    String groupId,
+    String walletId, {
+    String? name,
+    String? description,
+    String? byName,
+    String? byPhone,
+  }) async {
+    final m = <String, dynamic>{
       'updatedAt': DateTime.now().toIso8601String(),
-    }, SetOptions(merge: true));
+      'updatedByName': byName,
+      'updatedByPhone': byPhone,
+    };
+    if (name != null && name.trim().isNotEmpty) m['name'] = name.trim();
+    if (description != null) m['description'] = description.trim();
+    await _wallets(groupId).doc(walletId).set(m, SetOptions(merge: true));
   }
 
-  Future<void> applyWalletDelta(
-      String groupId, String walletId, double delta) async {
-    if (walletId.trim().isEmpty) return;
-    await _wallets(groupId).doc(walletId).set({
-      'balance': FieldValue.increment(delta),
+  /// Archive a wallet (only when empty; the default wallet can't be removed).
+  /// Returns an Arabic error string, or null on success. The ledger is kept.
+  Future<String?> deleteWallet(String groupId, String walletId) async {
+    final ref = _wallets(groupId).doc(walletId);
+    final snap = await ref.get();
+    if (!snap.exists) return 'المحفظة غير موجودة.';
+    final data = snap.data()!;
+    if (data['isDefault'] == true) return 'لا يمكن حذف المحفظة الأساسية.';
+    final bal = (data['balance'] as num?)?.toDouble() ?? 0;
+    if (bal.abs() > 0.005) {
+      return 'لا يمكن حذف محفظة بها رصيد. اضبط الرصيد على صفر أولًا.';
+    }
+    await ref.set({
+      'archived': true,
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
+    return null;
+  }
+
+  /// Post a DR/CR of a fixed [amount] to the wallet ledger and update the
+  /// parent balance atomically. Returns the new accumulated balance.
+  Future<double> postWalletEntry(
+    String groupId,
+    String walletId, {
+    required String direction, // 'DR' | 'CR'
+    required double amount,
+    required String source,
+    String? note,
+    String? refTransactionId,
+    String? byName,
+    String? byPhone,
+  }) {
+    final signed = direction == 'CR' ? -amount.abs() : amount.abs();
+    return _postWallet(
+      groupId,
+      walletId,
+      computeSigned: (_) => signed,
+      source: source,
+      note: note,
+      refTransactionId: refTransactionId,
+      byName: byName,
+      byPhone: byPhone,
+    );
+  }
+
+  /// Set a wallet to an absolute [target] balance, recording the difference as
+  /// an 'adjustment' ledger entry. Returns the new balance.
+  Future<double> setWalletBalance(
+    String groupId,
+    String walletId,
+    double target, {
+    String? byName,
+    String? byPhone,
+  }) {
+    return _postWallet(
+      groupId,
+      walletId,
+      computeSigned: (current) => target - current,
+      source: 'adjustment',
+      note: 'تعديل يدوي للرصيد',
+      byName: byName,
+      byPhone: byPhone,
+    );
+  }
+
+  /// Backwards-compatible signed delta (used by expense/reversal flows). A
+  /// negative delta credits the wallet, a positive delta debits it.
+  Future<double> applyWalletDelta(
+    String groupId,
+    String walletId,
+    double delta, {
+    String source = 'adjustment',
+    String? note,
+    String? refTransactionId,
+    String? byName,
+    String? byPhone,
+  }) {
+    if (walletId.trim().isEmpty) return Future.value(0);
+    return _postWallet(
+      groupId,
+      walletId,
+      computeSigned: (_) => delta,
+      source: source,
+      note: note,
+      refTransactionId: refTransactionId,
+      byName: byName,
+      byPhone: byPhone,
+    );
+  }
+
+  /// Core ledger transaction: lazily creates an opening entry for legacy
+  /// wallets, appends the new entry with its accumulated balance, and updates
+  /// the parent wallet — all atomically.
+  Future<double> _postWallet(
+    String groupId,
+    String walletId, {
+    required double Function(double current) computeSigned,
+    required String source,
+    String? note,
+    String? refTransactionId,
+    String? byName,
+    String? byPhone,
+  }) async {
+    final walletRef = _wallets(groupId).doc(walletId);
+    final entriesRef = walletRef.collection('entries');
+    return _fs.runTransaction<double>((tx) async {
+      final snap = await tx.get(walletRef);
+      if (!snap.exists) return 0; // wallet gone (e.g. archived) → no-op
+      final data = snap.data() ?? <String, dynamic>{};
+      final current = (data['balance'] as num?)?.toDouble() ?? 0;
+      final ledgerStarted = data['ledgerStarted'] == true;
+      final createdAt =
+          (data['createdAt'] as String?) ?? DateTime.now().toIso8601String();
+      final signed = computeSigned(current);
+      if (signed == 0) return current;
+
+      final nowIso = DateTime.now().toIso8601String();
+
+      // Legacy wallets created before the ledger existed: anchor their current
+      // balance with an opening entry so the running balance reconciles.
+      if (!ledgerStarted && current != 0) {
+        final openRef = entriesRef.doc();
+        tx.set(openRef, {
+          'id': openRef.id,
+          'walletId': walletId,
+          'direction': current >= 0 ? 'DR' : 'CR',
+          'amount': current.abs(),
+          'balanceAfter': current,
+          'at': createdAt,
+          'source': 'opening',
+          'note': 'رصيد افتتاحي',
+          'byName': data['updatedByName'],
+          'byPhone': data['updatedByPhone'],
+        });
+      }
+
+      final running = current + signed;
+      final entryRef = entriesRef.doc();
+      tx.set(entryRef, {
+        'id': entryRef.id,
+        'walletId': walletId,
+        'direction': signed >= 0 ? 'DR' : 'CR',
+        'amount': signed.abs(),
+        'balanceAfter': running,
+        'at': nowIso,
+        'source': source,
+        'note': note,
+        'refTransactionId': refTransactionId,
+        'byName': byName,
+        'byPhone': byPhone,
+      });
+
+      tx.set(walletRef, {
+        'balance': running,
+        'updatedAt': nowIso,
+        'updatedByName': byName,
+        'updatedByPhone': byPhone,
+        'ledgerStarted': true,
+      }, SetOptions(merge: true));
+
+      return running;
+    });
+  }
+
+  /// The wallet's ledger, oldest entry first.
+  Future<List<WalletEntryModel>> getWalletEntriesSync(
+      String groupId, String walletId) async {
+    final q = await _walletEntries(groupId, walletId).get();
+    final list = q.docs
+        .map((d) => WalletEntryModel.fromMap({...d.data(), 'id': d.id}))
+        .toList();
+    list.sort((a, b) => a.at.compareTo(b.at));
+    return list;
   }
 
   // ─── Expense Categories + Budgets ───

@@ -147,6 +147,16 @@ service cloud.firestore {
           && request.resource.data.balance >= 0
           && request.resource.data.isDefault is bool;
         allow delete: if validGroupId(groupId);
+
+        // Per-wallet ledger (DR/CR movements with accumulated balance).
+        match /entries/{entryId} {
+          allow read: if validGroupId(groupId);
+          allow create, update: if validGroupId(groupId)
+            && request.resource.data.amount is number
+            && request.resource.data.direction is string
+            && request.resource.data.balanceAfter is number;
+          allow delete: if validGroupId(groupId);
+        }
       }
 
       match /teams/{teamId} {

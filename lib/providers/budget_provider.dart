@@ -135,11 +135,25 @@ class BudgetProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> addWallet(String groupId, String name, double balance) async {
+  Future<void> addWallet(
+    String groupId,
+    String name, {
+    String description = '',
+    double balance = 0,
+    String? byName,
+    String? byPhone,
+  }) async {
     _loading = true;
     notifyListeners();
     try {
-      await _db.addWallet(groupId, name, balance);
+      await _db.addWallet(
+        groupId,
+        name,
+        description: description,
+        balance: balance,
+        byName: byName,
+        byPhone: byPhone,
+      );
       _wallets = await _db.getWalletsSync(groupId);
     } finally {
       _loading = false;
@@ -147,13 +161,65 @@ class BudgetProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> updateWalletBalance(
-      String groupId, String walletId, double balance) async {
+  Future<void> updateWallet(
+    String groupId,
+    String walletId, {
+    String? name,
+    String? description,
+    String? byName,
+    String? byPhone,
+  }) async {
     _loading = true;
     notifyListeners();
     try {
-      await _db.updateWalletBalance(groupId, walletId, balance);
+      await _db.updateWallet(
+        groupId,
+        walletId,
+        name: name,
+        description: description,
+        byName: byName,
+        byPhone: byPhone,
+      );
       _wallets = await _db.getWalletsSync(groupId);
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Set a wallet to an absolute balance (records an adjustment ledger entry).
+  Future<void> setWalletBalance(
+    String groupId,
+    String walletId,
+    double target, {
+    String? byName,
+    String? byPhone,
+  }) async {
+    _loading = true;
+    notifyListeners();
+    try {
+      await _db.setWalletBalance(
+        groupId,
+        walletId,
+        target,
+        byName: byName,
+        byPhone: byPhone,
+      );
+      _wallets = await _db.getWalletsSync(groupId);
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Archive a wallet. Returns an Arabic error string, or null on success.
+  Future<String?> deleteWallet(String groupId, String walletId) async {
+    _loading = true;
+    notifyListeners();
+    try {
+      final error = await _db.deleteWallet(groupId, walletId);
+      _wallets = await _db.getWalletsSync(groupId);
+      return error;
     } finally {
       _loading = false;
       notifyListeners();

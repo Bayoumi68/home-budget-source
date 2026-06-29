@@ -446,10 +446,16 @@ class _TeamsScreenState extends State<TeamsScreen> {
       await _db.applyTeamBalanceDelta(widget.groupId, team.id, deleted.amount);
     }
     if (deleted?.walletId != null && deleted!.walletId!.isNotEmpty) {
+      final actor = context.read<AuthProvider>().user;
       await _db.applyWalletDelta(
         widget.groupId,
         deleted.walletId!,
         deleted.amount,
+        source: 'reversal',
+        note: 'إرجاع: ${deleted.category}',
+        refTransactionId: deleted.id,
+        byName: actor?.name,
+        byPhone: actor?.phone,
       );
     }
     final user = context.read<AuthProvider>().user;

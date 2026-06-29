@@ -158,6 +158,24 @@ class ChatProvider extends ChangeNotifier {
       return null;
     }
 
+    // A "cash into wallet" message is a top-up, handled by the chat screen
+    // (it picks the wallet). If we ever reach here, store it as plain text so
+    // it is never mis-booked as an expense.
+    if (AIService.parseWalletInjection(text) != null) {
+      await _db.sendMessage(ChatMessage(
+        id: _uuid.v4(),
+        groupId: groupId,
+        senderId: user.id,
+        senderName: user.name,
+        senderAvatar: user.photoUrl,
+        type: MessageType.text,
+        content: text,
+        timestamp: DateTime.now(),
+      ));
+      await refreshMessages(groupId);
+      return null;
+    }
+
     final aiResults = AIService.parseExpenseMessages(text);
     if (aiResults.length > 1) {
       return _sendMultipleParsedEntries(
@@ -266,7 +284,16 @@ class ChatProvider extends ChangeNotifier {
       );
       await _db.addTransaction(transaction);
       if (isExpense && wallet != null) {
-        await _db.applyWalletDelta(groupId, wallet.id, -amount);
+        await _db.applyWalletDelta(
+          groupId,
+          wallet.id,
+          -amount,
+          source: 'expense',
+          note: aiResult['category'] as String?,
+          refTransactionId: transactionId,
+          byName: user.name,
+          byPhone: user.phone,
+        );
       }
 
       final category = aiResult['category'] as String;
@@ -310,6 +337,47 @@ class ChatProvider extends ChangeNotifier {
     return null;
   }
 
+  /// Cash into a wallet (a top-up): DR the wallet ledger and update its
+  /// balance. It is NOT recorded as income. Returns an Arabic warning, or null.
+  Future<String?> injectToWallet(
+    String groupId,
+    UserModel user,
+    double amount,
+    WalletModel wallet, {
+    String? note,
+  }) async {
+    if (!user.canAddExpenses) {
+      const warning = '⛔ ليس لديك صلاحية إضافة عمليات. اطلب من قائد العائلة تفعيلها.';
+      await _sendSystemMessage(groupId, warning);
+      await refreshMessages(groupId);
+      return warning;
+    }
+    try {
+      final newBalance = await _db.postWalletEntry(
+        groupId,
+        wallet.id,
+        direction: 'DR',
+        amount: amount,
+        source: 'injection',
+        note: note,
+        byName: user.name,
+        byPhone: user.phone,
+      );
+      await _sendSystemMessage(
+        groupId,
+        '💰 إيداع نقدي: ${amount.toStringAsFixed(0)} ج في ${wallet.name}.\n'
+        'رصيد المحفظة الآن: ${newBalance.toStringAsFixed(0)} ج.',
+      );
+      await refreshMessages(groupId);
+      return null;
+    } catch (_) {
+      const warning = 'تعذر تنفيذ الإيداع. حاول مرة أخرى.';
+      await _sendSystemMessage(groupId, warning);
+      await refreshMessages(groupId);
+      return warning;
+    }
+  }
+
   /// Corrects an expense's category and teaches the parser from it (offline).
   Future<void> recategorizeExpense(
       String groupId, ChatMessage message, String category) async {
@@ -337,7 +405,16 @@ class ChatProvider extends ChangeNotifier {
     if (deleted.isExpense &&
         deleted.walletId != null &&
         deleted.walletId!.isNotEmpty) {
-      await _db.applyWalletDelta(groupId, deleted.walletId!, deleted.amount);
+      await _db.applyWalletDelta(
+        groupId,
+        deleted.walletId!,
+        deleted.amount,
+        source: 'reversal',
+        note: 'إرجاع: ${deleted.category}',
+        refTransactionId: deleted.id,
+        byName: user.name,
+        byPhone: user.phone,
+      );
     }
 
     await _db.markTransactionMessageDeleted(groupId, message.transactionId!);
@@ -493,7 +570,16 @@ class ChatProvider extends ChangeNotifier {
         walletName: isExpense ? wallet?.name : null,
       ));
       if (isExpense && wallet != null) {
-        await _db.applyWalletDelta(groupId, wallet.id, -amount);
+        await _db.applyWalletDelta(
+          groupId,
+          wallet.id,
+          -amount,
+          source: 'expense',
+          note: result['category'] as String?,
+          refTransactionId: transactionId,
+          byName: user.name,
+          byPhone: user.phone,
+        );
       }
     }
 
@@ -558,7 +644,16 @@ class ChatProvider extends ChangeNotifier {
       await _db.addTransaction(transaction);
       await _db.applyTeamBalanceDelta(groupId, team.id, -amount);
       if (wallet != null) {
-        await _db.applyWalletDelta(groupId, wallet.id, -amount);
+        await _db.applyWalletDelta(
+          groupId,
+          wallet.id,
+          -amount,
+          source: 'expense',
+          note: result['category'] as String?,
+          refTransactionId: transactionId,
+          byName: user.name,
+          byPhone: user.phone,
+        );
       }
       savedCount++;
       total += amount;
