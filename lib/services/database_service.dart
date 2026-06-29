@@ -440,17 +440,11 @@ class DatabaseService {
           'اكتب رقم موبايلك للانضمام — يجب أن يطابق الرقم الذي سجّله القائد لك.');
     }
 
-    // The joiner must MATCH a slot the admin pre-registered (by phone), exactly
-    // like family members. A returning login reuses its own slot.
-    UserModel? slot;
-    try {
-      final q = await _members(groupId)
-          .where('authUid', isEqualTo: authUid)
-          .limit(1)
-          .get();
-      if (q.docs.isNotEmpty) slot = UserModel.fromMap(q.docs.first.data());
-    } catch (_) {}
-    slot ??= await getMemberByPhone(groupId, normalizedPhone);
+    // Match strictly by the assigned PHONE — that's the join key. We do NOT
+    // fall back to this login's other memberships: someone who is already a
+    // family member (e.g. the admin testing) opening a team invite must still
+    // match the worker slot by phone, not their own family doc.
+    final slot = await getMemberByPhone(groupId, normalizedPhone);
 
     if (teamId.isNotEmpty) {
       // Worker join: must match a worker the admin added to THIS team.
