@@ -68,13 +68,16 @@ class _MembersScreenState extends State<MembersScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: ListTile(
                       onTap: (auth.user?.isAdmin == true && !member.isAdmin)
-                          ? () => Navigator.push(
+                          ? () async {
+                              await Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                   builder: (_) => MemberDetailScreen(
                                       groupId: widget.groupId, member: member),
                                 ),
-                              )
+                              );
+                              _loadMembers();
+                            }
                           : null,
                       leading: CircleAvatar(
                         backgroundColor: member.isAdmin

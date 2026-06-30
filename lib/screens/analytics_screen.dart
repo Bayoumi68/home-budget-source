@@ -427,25 +427,85 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Column(
       children: active.map((w) {
         final spent = spentByWallet[w.id] ?? 0;
+        final entries =
+            (_ledger[w.id] ?? const <WalletEntryModel>[]).reversed.toList();
         return Card(
           margin: const EdgeInsets.only(bottom: 6),
-          child: ListTile(
+          child: ExpansionTile(
             dense: true,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
             leading: Icon(
                 w.isMemberWallet
                     ? Icons.person_rounded
                     : Icons.account_balance_wallet_rounded,
                 color: AppTheme.accentTeal),
             title: Text(w.name),
-            subtitle: Text(w.isMemberWallet ? 'محفظة عضو' : 'مصدر نقدي'),
-            trailing: Text(
-                'صرف ${_money.format(spent)} ج\nرصيد ${_money.format(w.balance)} ج',
-                textAlign: TextAlign.end,
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+                '${w.isMemberWallet ? 'محفظة عضو' : 'مصدر نقدي'} • صرف ${_money.format(spent)} • رصيد ${_money.format(w.balance)} ج'),
+            childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
+            children: entries.isEmpty
+                ? const [
+                    Padding(
+                      padding: EdgeInsets.all(10),
+                      child: Text('لا توجد حركات على هذه المحفظة.'),
+                    )
+                  ]
+                : [_walletLedger(entries)],
           ),
         );
       }).toList(),
     );
+  }
+
+  Widget _walletLedger(List<WalletEntryModel> entries) {
+    final df = DateFormat('MM/dd HH:mm');
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columnSpacing: 14,
+        headingRowHeight: 30,
+        dataRowMinHeight: 30,
+        dataRowMaxHeight: 48,
+        columns: const [
+          DataColumn(label: Text('التاريخ')),
+          DataColumn(label: Text('البيان')),
+          DataColumn(label: Text('وارد')),
+          DataColumn(label: Text('منصرف')),
+          DataColumn(label: Text('الرصيد')),
+        ],
+        rows: entries.map((e) {
+          final note = (e.note ?? '').trim();
+          return DataRow(cells: [
+            DataCell(Text(df.format(e.at))),
+            DataCell(Text(note.isNotEmpty ? note : _srcLabel(e.source))),
+            DataCell(Text(e.isDebit ? _money.format(e.amount) : '—',
+                style: const TextStyle(color: AppTheme.incomeGreen))),
+            DataCell(Text(!e.isDebit ? _money.format(e.amount) : '—',
+                style: const TextStyle(color: AppTheme.expenseRed))),
+            DataCell(Text(_money.format(e.balanceAfter))),
+          ]);
+        }).toList(),
+      ),
+    );
+  }
+
+  String _srcLabel(String s) {
+    switch (s) {
+      case 'opening':
+        return 'رصيد افتتاحي';
+      case 'injection':
+        return 'إيداع';
+      case 'expense':
+        return 'مصروف';
+      case 'reversal':
+        return 'إرجاع';
+      case 'transfer':
+        return 'تحويل';
+      case 'withdrawal':
+        return 'سحب';
+      default:
+        return s;
+    }
   }
 
   // ─── Trend over time ───

@@ -224,7 +224,9 @@ class _TeamsScreenState extends State<TeamsScreen> {
                 leading: const Icon(Icons.engineering_rounded),
                 title: Text(w.name),
                 subtitle: Text('صرف: ${_money.format(memberSpent)} ج'
-                    '${(w.phone ?? '').isEmpty ? '' : ' — ${w.phone}'}'),
+                    '${(w.phone ?? '').isEmpty ? '' : ' — ${w.phone}'}'
+                    '${(w.email ?? '').isEmpty ? '' : '\n${w.email}'}'),
+                isThreeLine: (w.email ?? '').isNotEmpty,
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -237,12 +239,15 @@ class _TeamsScreenState extends State<TeamsScreen> {
                           if (v == 'withdraw') {
                             _fundWorker(team, w, withdraw: true);
                           }
+                          if (v == 'edit') _editWorker(team, w);
                           if (v == 'invite') _inviteWorker(team, w);
                           if (v == 'remove') _removeWorker(team, w);
                         },
                         itemBuilder: (_) => const [
                           PopupMenuItem(value: 'fund', child: Text('تمويل')),
                           PopupMenuItem(value: 'withdraw', child: Text('سحب')),
+                          PopupMenuItem(
+                              value: 'edit', child: Text('تعديل البيانات')),
                           PopupMenuItem(
                               value: 'invite', child: Text('دعوة للدخول')),
                           PopupMenuItem(value: 'remove', child: Text('إزالة')),
@@ -285,6 +290,73 @@ class _TeamsScreenState extends State<TeamsScreen> {
         ],
       ),
     );
+  }
+
+  /// Edit a worker's name (always) and phone (only while still pending — once
+  /// the worker has joined, the phone is locked, same rule as family members).
+  Future<void> _editWorker(TeamModel team, UserModel w) async {
+    final nameC = TextEditingController(text: w.name);
+    final phoneC = TextEditingController(text: w.phone ?? '');
+    final canEditPhone = !w.joined;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('تعديل بيانات ${w.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameC,
+              decoration: const InputDecoration(
+                  labelText: 'الاسم', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: phoneC,
+              enabled: canEditPhone,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(
+                labelText: 'رقم الهاتف',
+                border: const OutlineInputBorder(),
+                helperText: canEditPhone
+                    ? 'يمكن تعديله قبل انضمام العامل فقط'
+                    : 'ثابت بعد انضمام العامل',
+              ),
+            ),
+            if ((w.email ?? '').isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text('البريد: ${w.email}',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('حفظ')),
+        ],
+      ),
+    );
+    final newName = nameC.text.trim();
+    final newPhone = phoneC.text.trim();
+    nameC.dispose();
+    phoneC.dispose();
+    if (ok != true || !mounted) return;
+    await _db.updateMemberNameLimit(widget.groupId, w.id, name: newName);
+    if (canEditPhone && newPhone.isNotEmpty && newPhone != (w.phone ?? '')) {
+      final err = await _db.changePendingMemberPhone(widget.groupId, w, newPhone);
+      if (err != null && mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(err)));
+      }
+    }
+    await _load();
   }
 
   Future<void> _addWorkerDialog(TeamModel team) async {
@@ -551,21 +623,14 @@ class _TeamsScreenState extends State<TeamsScreen> {
       'هل تريد حذف ${_money.format(txn.amount)} ج من فريق ${team.name}؟',
     );
     if (ok != true) return;
-    final deleted = await _db.deleteTransaction(widget.groupId, txn.id);
-    if (deleted?.walletId != null && deleted!.walletId!.isNotEmpty) {
-      final actor = context.read<AuthProvider>().user;
-      await _db.applyWalletDelta(
-        widget.groupId,
-        deleted.walletId!,
-        deleted.amount,
-        source: 'reversal',
-        note: 'إرجاع: ${deleted.category}',
-        refTransactionId: deleted.id,
-        byName: actor?.name,
-        byPhone: actor?.phone,
-      );
-    }
     final user = context.read<AuthProvider>().user;
+    // deleteTransaction posts the wallet reversal itself (ledger integrity).
+    await _db.deleteTransaction(
+      widget.groupId,
+      txn.id,
+      byName: user?.name,
+      byPhone: user?.phone,
+    );
     if (user != null) {
       await _db.addFamilyNotification(FamilyNotificationModel(
         id: DateTime.now().microsecondsSinceEpoch.toString(),

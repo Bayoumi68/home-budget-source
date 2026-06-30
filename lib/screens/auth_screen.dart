@@ -407,12 +407,17 @@ class _AuthScreenState extends State<AuthScreen> {
             style: TextStyle(color: Colors.white70, fontSize: 15)),
         const SizedBox(height: 14),
         ...memberships.map((m) {
-          final role = m.member.isAdmin ? 'قائد العائلة' : 'عضو';
+          final role = m.member.isWorker
+              ? 'عامل'
+              : (m.member.isAdmin ? 'قائد العائلة' : 'عضو');
+          final roleColor = m.member.isAdmin
+              ? AppTheme.gold
+              : (m.member.isWorker ? Colors.orange : AppTheme.primaryGreen);
           return Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: SizedBox(
               width: double.infinity,
-              height: 58,
+              height: 64,
               child: ElevatedButton(
                 onPressed: _busy
                     ? null
@@ -430,17 +435,23 @@ class _AuthScreenState extends State<AuthScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Flexible(
-                      child: Text(m.group.name,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 17, fontWeight: FontWeight.bold)),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(m.member.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 17, fontWeight: FontWeight.bold)),
+                          Text(m.group.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.black54)),
+                        ],
+                      ),
                     ),
                     Text(role,
-                        style: TextStyle(
-                            fontSize: 13,
-                            color: m.member.isAdmin
-                                ? AppTheme.gold
-                                : AppTheme.primaryGreen)),
+                        style: TextStyle(fontSize: 13, color: roleColor)),
                   ],
                 ),
               ),
@@ -448,6 +459,13 @@ class _AuthScreenState extends State<AuthScreen> {
           );
         }),
         const SizedBox(height: 4),
+        TextButton.icon(
+          onPressed: _busy ? null : () => _promptReconnectAdmin(auth, memberships),
+          icon: const Icon(Icons.manage_accounts_rounded,
+              color: Colors.white70, size: 18),
+          label: const Text('عائلتك بلا قائد؟ استعد حساب القائد',
+              style: TextStyle(color: Colors.white70, fontSize: 13)),
+        ),
         TextButton(
           onPressed:
               _busy ? null : () => setState(() => _creatingFamily = true),
@@ -629,9 +647,194 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
         ),
+        const SizedBox(height: 6),
+        TextButton.icon(
+          onPressed: _busy ? null : _promptInviteCode,
+          icon: const Icon(Icons.vpn_key_rounded,
+              color: Colors.white70, size: 18),
+          label: const Text('لديك كود دعوة؟ أدخله',
+              style: TextStyle(color: Colors.white70)),
+        ),
+        TextButton.icon(
+          onPressed: _busy ? null : () => _promptRestoreByPhone(auth),
+          icon: const Icon(Icons.restore_rounded,
+              color: Colors.white70, size: 18),
+          label: const Text('استعد حساباتك برقم هاتفك',
+              style: TextStyle(color: Colors.white70)),
+        ),
         _signedInFooter(auth),
       ],
     );
+  }
+
+  /// Manual invite-code entry — the reliable path for the installed app, where
+  /// an https invite link opens the browser instead of the app.
+  Future<void> _promptInviteCode() async {
+    final controller = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('أدخل كود الدعوة'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(hintText: 'مثال: A1B2C3D4'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('متابعة')),
+        ],
+      ),
+    );
+    if (!mounted || code == null || code.isEmpty) return;
+    setState(() => _inviteCode = code.toUpperCase());
+    _loadInviteFamilyName();
+  }
+
+  /// Reconnect the family's DESIGNATED admin row (`families.adminId`) to this
+  /// Google login — keyed off adminId, never by phone-guessing or by promoting
+  /// some member. Scenario A: the row exists → rebind it. Scenario B: the
+  /// pointer dangles → recreate the row. Reports which, and touches no other
+  /// member row.
+  Future<void> _promptReconnectAdmin(
+      AuthProvider auth, List<FamilyMembership> memberships) async {
+    if (memberships.isEmpty) {
+      _snack('سجّل الدخول أولاً.');
+      return;
+    }
+    var target = memberships.first;
+    if (memberships.length > 1) {
+      final chosen = await showDialog<FamilyMembership>(
+        context: context,
+        builder: (ctx) => SimpleDialog(
+          title: const Text('أي عائلة؟'),
+          children: memberships
+              .map((m) => SimpleDialogOption(
+                    onPressed: () => Navigator.pop(ctx, m),
+                    child: Text(m.group.name),
+                  ))
+              .toList(),
+        ),
+      );
+      if (!mounted || chosen == null) return;
+      target = chosen;
+    }
+    final adminId = target.group.adminId;
+    if (adminId.trim().isEmpty) {
+      _snack('لا يوجد معرّف قائد لهذه العائلة.');
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('استعادة حساب القائد'),
+        content: Text(
+            'سأعيد ربط حساب قائد عائلة "${target.group.name}" بدخولك الحالي.\n'
+            'لن يتغيّر أي حساب آخر، ولن يُدمج أو يُحذف شيء.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('استعادة')),
+        ],
+      ),
+    );
+    if (!mounted || ok != true) return;
+    setState(() => _busy = true);
+    final res = await auth.reconnectAdmin(target.group.id, adminId);
+    if (!mounted) return;
+    if (res.error != null) {
+      setState(() => _busy = false);
+      _snack(res.error!);
+      return;
+    }
+    final err = await auth.openMembershipById(target.group.id, adminId);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      _snack(err);
+      return;
+    }
+    final String outcome;
+    if (res.recreated) {
+      outcome = 'لم يكن هناك حساب قائد فعلي (المؤشّر كان معلّقًا)، فأنشأت حساب '
+          'القائد وربطته بدخولك.';
+    } else if (res.wasWorker) {
+      outcome = 'كان حساب القائد قد تحوّل إلى "عامل" (لأن عاملًا أُنشئ بنفس رقم '
+          'هاتفك فأخذ نفس السجل). أعدته قائدًا للعائلة وأزلت صفة العامل وربطته '
+          'بدخولك.\n\nملاحظة: إن أردت ذلك العامل، أضِفه من جديد برقم هاتف مختلف.';
+    } else {
+      outcome =
+          'كان حساب القائد موجودًا، وأعدت ربطه بدخولك — دون تغيير أي حساب آخر.';
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تمت الاستعادة'),
+        content: Text(outcome),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('دخول')),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    _goToChat();
+  }
+
+  /// Recovery for a login that doesn't see all of its families/slots: enter the
+  /// phone the slot was registered with and re-bind it to this Google account.
+  Future<void> _promptRestoreByPhone(AuthProvider auth) async {
+    final controller =
+        TextEditingController(text: _phoneController.text.trim());
+    final phone = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('استعادة حساباتي'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'أدخل رقم موبايلك المسجّل (كقائد أو كعضو) لربط كل حساباتك بهذا الدخول.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.phone,
+              textDirection: TextDirection.ltr,
+              decoration: const InputDecoration(hintText: '01012345678'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('استعادة')),
+        ],
+      ),
+    );
+    if (!mounted || phone == null || phone.isEmpty) return;
+    setState(() => _busy = true);
+    final err = await auth.restoreByPhone(phone);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _membershipsFuture = null; // force the picker to reload
+    });
+    _snack(err ?? 'تمت الاستعادة. اختر حسابك من القائمة.');
   }
 
   Widget _signedInFooter(AuthProvider auth) {

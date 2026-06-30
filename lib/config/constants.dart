@@ -3,7 +3,7 @@ class AppConstants {
   static const String appWebLink = 'https://home-budgets.web.app';
   static const String androidDownloadLink =
       'https://home-budgets.web.app/download.html';
-  static const String appVersion = '0.5.23-team-only';
+  static const String appVersion = '0.5.44-polish-sweep';
   // TESTING: when true, phone-auth uses Firebase's app-verification-disabled
   // mode + test phone numbers — no reCAPTCHA image puzzle, no real SMS. This
   // applies to release/deployed builds too, so the family can test now. Set to

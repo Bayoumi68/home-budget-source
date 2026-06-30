@@ -7,9 +7,74 @@ class AIService {
   //   "سجل دخل 12000 مرتب" -> income / 12000 / راتب
   //   "بنزين ب ٣٠٠" -> expense / 300 / بنزين
 
+  // ── Intent-first money commands ───────────────────────────────────────────
+  // The VERB decides the action, not the presence of a number. Only when none
+  // of these intent words appear does a message fall through to "expense".
+  static const _addMoneyWords = ['اضافه', 'اضف']; // إضافة، أضف
+  static const _transferWords = ['تحويل', 'حول', 'نقل']; // حول، تحويل، نقل
+  static const _withdrawWords = ['اسحب', 'سحب']; // اسحب، سحب
+  static const _raiseLimitWords = ['رفع حد', 'رفع الحد', 'تزويد', 'زود'];
+  static const _lowerLimitWords = ['خفض', 'تخفيض', 'تنزيل حد', 'تنزيل الحد'];
+
+  /// Detects a money COMMAND by its verb and returns
+  /// `{intent, amount, fromHint, toHint}` — or null when there's no money verb
+  /// (so the text can be treated as a plain expense). intent is one of:
+  /// add | withdraw | transfer | raiseLimit | lowerLimit.
+  static Map<String, dynamic>? parseMoneyCommand(String text) {
+    final original = text.trim();
+    if (original.isEmpty) return null;
+    final n = _normalize(original);
+
+    String? intent;
+    if (_raiseLimitWords.any(n.contains)) {
+      intent = 'raiseLimit';
+    } else if (_lowerLimitWords.any(n.contains)) {
+      intent = 'lowerLimit';
+    } else if (_transferWords.any(n.contains)) {
+      intent = 'transfer';
+    } else if (_withdrawWords.any(n.contains)) {
+      intent = 'withdraw';
+    } else if (_addMoneyWords.any(n.contains)) {
+      intent = 'add';
+    } else {
+      return null;
+    }
+    return {
+      'intent': intent,
+      'amount': _extractAmount(n),
+      'fromHint': _hintAfter(n, const ['من']),
+      'toHint': _hintAfter(n, const ['الي', 'إلي', 'الى']),
+      'text': n,
+    };
+  }
+
+  /// The phrase after a direction marker (من / إلى), cleaned of digits and the
+  /// currency word, used to match a wallet or a person by name.
+  static String? _hintAfter(String n, List<String> markers) {
+    for (final mk in markers) {
+      final idx = n.indexOf('$mk ');
+      if (idx < 0) continue;
+      var rest = n.substring(idx + mk.length + 1).trim();
+      for (final stop in const ['الي', 'إلي', 'الى', ' من ']) {
+        final si = rest.indexOf(stop);
+        if (si > 0) rest = rest.substring(0, si).trim();
+      }
+      rest = rest
+          .replaceAll(RegExp(r'[0-9٠-٩.,]+'), '')
+          .replaceAll('جنيه', '')
+          .replaceAll('محفظه', '')
+          .trim();
+      if (rest.isNotEmpty) return rest;
+    }
+    return null;
+  }
+
   static Map<String, dynamic>? parseExpenseMessage(String text) {
     final original = text.trim();
     if (original.isEmpty) return null;
+    // Intent-first: a money command (add/withdraw/transfer/limit) is never an
+    // expense, even though it contains a number.
+    if (parseMoneyCommand(original) != null) return null;
 
     final normalized = _normalize(original);
     final amount = _extractAmount(normalized);
@@ -36,6 +101,8 @@ class AIService {
   static List<Map<String, dynamic>> parseExpenseMessages(String text) {
     final original = text.trim();
     if (original.isEmpty) return const [];
+    // A money command is never an expense (intent-first).
+    if (parseMoneyCommand(original) != null) return const [];
 
     final normalized = _normalize(original);
     final amountMatches = RegExp(r'(?<!\d)(\d+(?:\.\d+)?)(?!\d)')
@@ -375,6 +442,11 @@ class AIService {
     'اضف للمحفظه',
     'ضيف للمحفظه',
     'اضافه للمحفظه',
+    // "إضافة" (the noun the admin types to fund). A money amount is required by
+    // the parser anyway, so "إضافة 500" funds the wallet instead of spending.
+    // Kept to the noun form only — the verb "اضف/ضيف" is too greedy and would
+    // swallow real expenses like "اضفت ...".
+    'اضافه',
     'شحن المحفظه',
     'شحنت المحفظه',
     'زود المحفظه',

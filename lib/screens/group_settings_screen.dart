@@ -13,6 +13,7 @@ import '../providers/theme_provider.dart';
 import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
 import '../utils/category_utils.dart';
+import 'learned_keywords_screen.dart';
 
 class GroupSettingsScreen extends StatefulWidget {
   final String groupId;
@@ -709,6 +710,24 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                   Icon(theme.isDark ? Icons.dark_mode : Icons.light_mode),
               value: theme.isDark,
               onChanged: (_) => theme.toggle(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.school_rounded,
+                  color: AppTheme.primaryGreen),
+              title: const Text('الكلمات المتعلَّمة'),
+              subtitle: const Text(
+                  'الكلمات التي تعلّم التطبيق ربطها بأنواع المصاريف — احذف الخطأ.'),
+              trailing: const Icon(Icons.chevron_left_rounded),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      LearnedKeywordsScreen(groupId: widget.groupId),
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 16),

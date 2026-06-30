@@ -21,6 +21,10 @@ class ChatMessage {
   final bool overCap;
   // For admin→member directed messages (per-member chat); null = family-wide.
   final String? targetUserId;
+  // WhatsApp-style reply: the message this one is replying to (null = none).
+  final String? replyToId;
+  final String? replyToSender;
+  final String? replyToText;
 
   ChatMessage({
     required this.id,
@@ -40,6 +44,9 @@ class ChatMessage {
     this.isDeleted = false,
     this.overCap = false,
     this.targetUserId,
+    this.replyToId,
+    this.replyToSender,
+    this.replyToText,
   });
 
   Map<String, dynamic> toMap() => {
@@ -60,6 +67,9 @@ class ChatMessage {
     'isDeleted': isDeleted,
     'overCap': overCap,
     'targetUserId': targetUserId,
+    'replyToId': replyToId,
+    'replyToSender': replyToSender,
+    'replyToText': replyToText,
   };
 
   factory ChatMessage.fromMap(Map<String, dynamic> map) => ChatMessage(
@@ -80,6 +90,9 @@ class ChatMessage {
     isDeleted: map['isDeleted'] == true,
     overCap: map['overCap'] == true,
     targetUserId: map['targetUserId'],
+    replyToId: map['replyToId'],
+    replyToSender: map['replyToSender'],
+    replyToText: map['replyToText'],
   );
 }
 

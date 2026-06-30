@@ -5,10 +5,12 @@ import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../models/team_model.dart';
 import '../models/transaction_model.dart';
+import '../models/wallet_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../services/ai_service.dart';
 import '../services/database_service.dart';
+import '../services/voice_service.dart';
 
 class TeamMemberHomeScreen extends StatefulWidget {
   final String groupId;
@@ -26,12 +28,15 @@ class TeamMemberHomeScreen extends StatefulWidget {
 
 class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
   final _db = DatabaseService();
+  final _voice = VoiceService();
   final _controller = TextEditingController();
   final _money = NumberFormat('#,###');
   TeamModel? _team;
+  WalletModel? _wallet;
   List<TransactionModel> _txns = const [];
   bool _loading = true;
   bool _saving = false;
+  bool _isRecording = false;
 
   @override
   void initState() {
@@ -41,8 +46,45 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
 
   @override
   void dispose() {
+    _voice.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _toggleMic() async {
+    if (_isRecording) {
+      await _voice.stopListening();
+      if (mounted) setState(() => _isRecording = false);
+      return;
+    }
+    final ok = await _voice.initialize(
+      onError: (e) {
+        if (mounted) _snack('مشكلة في الميكروفون: $e');
+      },
+    );
+    if (!ok) {
+      _snack(_voice.lastError ?? 'الميكروفون غير متاح أو لم يُمنح الإذن.');
+      return;
+    }
+    if (mounted) setState(() => _isRecording = true);
+    await _voice.startListening(
+      (result, isFinal) {
+        _controller.text = result;
+        _controller.selection =
+            TextSelection.fromPosition(TextPosition(offset: result.length));
+      },
+      onError: (e) {
+        if (mounted) {
+          setState(() => _isRecording = false);
+          _snack('لم أستطع سماع الرسالة: $e');
+        }
+      },
+      onStatus: (status) {
+        if ((status == 'done' || status == 'notListening') && mounted) {
+          setState(() => _isRecording = false);
+        }
+      },
+    );
   }
 
   Future<void> _load() async {
@@ -55,9 +97,21 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
     // A worker sees only their OWN expenses, not the whole team's.
     final txns =
         myId == null ? all : all.where((t) => t.userId == myId).toList();
+    // The worker's own wallet (a member wallet tagged with this team).
+    WalletModel? wallet;
+    if (myId != null) {
+      final wallets = await _db.getWalletsSync(widget.groupId);
+      for (final w in wallets) {
+        if (w.isMemberWallet && w.ownerId == myId) {
+          wallet = w;
+          break;
+        }
+      }
+    }
     if (!mounted) return;
     setState(() {
       _team = team;
+      _wallet = wallet;
       _txns = txns;
       _loading = false;
     });
@@ -119,6 +173,76 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
   void _snack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Widget _walletCard() {
+    final wallet = _wallet;
+    final now = DateTime.now();
+    final monthSpent = _txns
+        .where((t) =>
+            t.isExpense && t.date.year == now.year && t.date.month == now.month)
+        .fold<double>(0, (s, t) => s + t.amount);
+    final limit = wallet?.limit ?? 0;
+    final overCap = limit > 0 && monthSpent > limit;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('الرصيد المتاح في محفظتي',
+              style: TextStyle(color: Colors.black54, fontSize: 13)),
+          const SizedBox(height: 4),
+          Text(
+            wallet == null
+                ? 'لا توجد محفظة بعد'
+                : '${_money.format(wallet.balance)} ج',
+            style: TextStyle(
+              color: (wallet?.balance ?? 0) < 0
+                  ? Colors.red.shade700
+                  : AppTheme.primaryDark,
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          if (limit > 0) ...[
+            const Divider(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('إنفاق هذا الشهر',
+                    style: TextStyle(color: Colors.black54, fontSize: 13)),
+                Text(
+                  '${_money.format(monthSpent)} / ${_money.format(limit)} ج',
+                  style: TextStyle(
+                    color: overCap ? Colors.red.shade700 : Colors.black87,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            if (overCap)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.flag_rounded,
+                        size: 16, color: Colors.red.shade700),
+                    const SizedBox(width: 4),
+                    Text('تجاوزت حد الإنفاق الشهري',
+                        style: TextStyle(
+                            color: Colors.red.shade700, fontSize: 12)),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -183,6 +307,8 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
                             'مصروفات الفريق تُخصم من محفظتك الخاصة.',
                             style: TextStyle(color: Colors.white70),
                           ),
+                          const SizedBox(height: 12),
+                          _walletCard(),
                         ],
                       ),
                     ),
@@ -221,6 +347,18 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
                         padding: const EdgeInsets.all(12),
                         child: Row(
                           children: [
+                            IconButton(
+                              onPressed: _saving ? null : _toggleMic,
+                              tooltip: _isRecording ? 'إيقاف' : 'تحدّث',
+                              icon: Icon(
+                                _isRecording
+                                    ? Icons.stop_circle_rounded
+                                    : Icons.mic_rounded,
+                                color: _isRecording
+                                    ? Colors.red
+                                    : AppTheme.primaryGreen,
+                              ),
+                            ),
                             Expanded(
                               child: TextField(
                                 controller: _controller,
@@ -229,7 +367,7 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
                                 textInputAction: TextInputAction.send,
                                 onSubmitted: (_) => _submit(),
                                 decoration: const InputDecoration(
-                                  hintText: 'اكتب مصروف الفريق',
+                                  hintText: 'اكتب أو تحدّث بمصروف الفريق',
                                   border: OutlineInputBorder(),
                                 ),
                               ),

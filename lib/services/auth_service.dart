@@ -20,8 +20,12 @@ class AuthService {
   /// Google sign-in. Web uses a popup; Android/iOS use the NATIVE account
   /// picker (google_sign_in) — no browser — then exchanges the token with
   /// Firebase.
-  Future<UserCredential> signInWithGoogle() async {
+  Future<UserCredential?> signInWithGoogle() async {
     if (kIsWeb) {
+      // Popup only. We do NOT fall back to signInWithRedirect: redirect needs
+      // sessionStorage on the auth domain, which storage-partitioned browsers
+      // block → the "missing initial state" error. If the popup fails, surface
+      // it so the user can switch to the APK or email/password.
       final provider = GoogleAuthProvider()
         ..setCustomParameters({'prompt': 'select_account'});
       return _auth.signInWithPopup(provider);
@@ -61,6 +65,13 @@ class AuthService {
   /// app start `currentUser` is null for a moment, so reading it too early would
   /// wrongly send a logged-in user back to the login screen.
   Future<void> waitForAuthReady() async {
+    if (kIsWeb) {
+      // Complete a pending redirect sign-in (the popup→redirect fallback) and
+      // clear any stale "missing initial state" from a previous attempt.
+      try {
+        await _auth.getRedirectResult();
+      } catch (_) {}
+    }
     try {
       await _auth.authStateChanges().first.timeout(const Duration(seconds: 6));
     } catch (_) {

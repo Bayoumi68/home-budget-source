@@ -17,6 +17,7 @@ import '../providers/notification_provider.dart';
 import '../models/chat_message_model.dart';
 import '../models/wallet_model.dart';
 import '../models/user_model.dart';
+import '../models/family_notification_model.dart';
 import '../services/voice_service.dart';
 import '../services/ai_service.dart';
 import '../services/database_service.dart';
@@ -69,6 +70,8 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _lastSubmittedText;
   DateTime? _lastSubmittedAt;
   String? _lastParsedPreview;
+  // WhatsApp-style reply: the message the next send will quote (null = none).
+  ChatMessage? _replyTo;
 
   @override
   void initState() {
@@ -280,6 +283,21 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    // Intent-first money commands (add / withdraw / transfer / set limit) —
+    // the verb decides, not the number. Checked before expense parsing.
+    final moneyCmd = AIService.parseMoneyCommand(text);
+    if (moneyCmd != null) {
+      _textController.clear();
+      setState(() => _lastParsedPreview = null);
+      await _handleMoneyCommand(moneyCmd);
+      await context.read<ChatProvider>().refreshMessages(widget.groupId);
+      _lastSubmittedText = null;
+      _lastSubmittedAt = null;
+      if (mounted) setState(() => _isSending = false);
+      _scrollToBottom();
+      return;
+    }
+
     // "Cash into wallet" (external cash in) — admin-only, into an admin wallet.
     final injection = AIService.parseWalletInjection(text);
     if (injection != null) {
@@ -391,15 +409,22 @@ class _ChatScreenState extends State<ChatScreen> {
         auth.user!.isAdmin &&
         AIService.parseReportRequest(text) == null &&
         !AIService.isNextReportCommand(text)) {
-      final routed = await _routeAdminMessage(text);
-      if (routed == null) {
-        _putTextInInput(text);
-        _lastSubmittedText = null;
-        _lastSubmittedAt = null;
-        if (mounted) setState(() => _isSending = false);
-        return;
+      final isReplyToMember = _replyTo != null &&
+          _members.any((m) => m.id == _replyTo!.senderId && !m.isAdmin);
+      if (isReplyToMember) {
+        // A reply already knows its recipient — the person you replied to.
+        directTargetUserId = _replyTo!.senderId;
+      } else {
+        final routed = await _routeAdminMessage(text);
+        if (routed == null) {
+          _putTextInInput(text);
+          _lastSubmittedText = null;
+          _lastSubmittedAt = null;
+          if (mounted) setState(() => _isSending = false);
+          return;
+        }
+        directTargetUserId = routed.isEmpty ? null : routed;
       }
-      directTargetUserId = routed.isEmpty ? null : routed;
     }
 
     _textController.clear();
@@ -407,6 +432,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _lastParsedPreview = null;
     });
 
+    final replyTo = _replyTo;
+    if (mounted) setState(() => _replyTo = null);
     try {
       final chat = context.read<ChatProvider>();
       final warning = await chat.sendTextMessage(
@@ -416,6 +443,7 @@ class _ChatScreenState extends State<ChatScreen> {
         wallet: selectedWallet,
         team: null,
         targetUserId: directTargetUserId,
+        replyTo: replyTo,
       );
       await chat.refreshMessages(widget.groupId);
       await context.read<BudgetProvider>().refreshData(widget.groupId);
@@ -474,6 +502,233 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<bool> _confirmCmd(String message) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تأكيد العملية'),
+        content: Text(message),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('تنفيذ')),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  /// Executes an intent-first money command (add / withdraw / transfer / set
+  /// limit). Admin-only; every move confirms first. Names in the message are
+  /// matched to a wallet or a person (member/worker) automatically.
+  Future<void> _handleMoneyCommand(Map<String, dynamic> cmd) async {
+    final auth = context.read<AuthProvider>();
+    final user = auth.user;
+    if (user == null) return;
+    if (!user.isAdmin) {
+      _snack('هذه العملية من صلاحية القائد فقط.');
+      return;
+    }
+    final intent = cmd['intent'] as String;
+    final amount = cmd['amount'] as double?;
+    final text = (cmd['text'] as String?) ?? '';
+    final fromHint = cmd['fromHint'] as String?;
+    final toHint = cmd['toHint'] as String?;
+
+    final budget = context.read<BudgetProvider>();
+    await budget.refreshData(widget.groupId);
+    final wallets = budget.wallets;
+    final adminWallets = wallets.where((w) => w.isAdminWallet).toList();
+    final people = (await _db.getMembersSync(widget.groupId))
+        .where((m) => !m.isAdmin)
+        .toList();
+
+    UserModel? person(String? hint) {
+      final hk = CategoryUtils.key((hint == null || hint.isEmpty) ? text : hint);
+      for (final p in people) {
+        final nk = CategoryUtils.key(p.name);
+        if (nk.length >= 2 && hk.contains(nk)) return p;
+      }
+      return null;
+    }
+
+    WalletModel? walletByName(String? hint, {bool adminOnly = false}) {
+      final pool = adminOnly ? adminWallets : wallets;
+      final hk = CategoryUtils.key((hint == null || hint.isEmpty) ? text : hint);
+      for (final w in pool) {
+        final nk = CategoryUtils.key(w.name);
+        if (nk.length >= 2 && hk.contains(nk)) return w;
+      }
+      return null;
+    }
+
+    WalletModel? walletOf(UserModel p) {
+      for (final w in wallets) {
+        if (w.isMemberWallet && w.ownerId == p.id) return w;
+      }
+      return null;
+    }
+
+    Future<void> done(String? errOrNull, String successMsg,
+        {List<String> targets = const []}) async {
+      await budget.refreshData(widget.groupId);
+      // Notify both parties (admin + the affected member) of the money action.
+      if (errOrNull == null && successMsg.isNotEmpty) {
+        await _db.addFamilyNotification(FamilyNotificationModel(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          groupId: widget.groupId,
+          title: 'حركة مالية',
+          body: successMsg,
+          actorId: user.id,
+          actorName: user.name,
+          timestamp: DateTime.now(),
+          targetUserIds: targets,
+        ));
+      }
+      if (!mounted) return;
+      await context.read<NotificationProvider>().load(widget.groupId);
+      _snack(errOrNull ?? successMsg);
+    }
+
+    if (intent == 'raiseLimit' || intent == 'lowerLimit') {
+      final p = person(toHint);
+      if (p == null) return _snack('لمن تضبط الحد؟ اكتب اسمه بوضوح.');
+      if (amount == null) return _snack('اكتب قيمة الحد.');
+      if (!await _confirmCmd(
+          'ضبط حد ${p.name} الشهري على ${amount.toStringAsFixed(0)} ج؟')) {
+        return;
+      }
+      await _db.updateMemberLimit(widget.groupId, p.id, amount);
+      await done(null, 'تم ضبط حد ${p.name} على ${amount.toStringAsFixed(0)} ج',
+          targets: [user.id, p.id]);
+      return;
+    }
+
+    if (amount == null) return _snack('اكتب المبلغ.');
+
+    if (intent == 'transfer') {
+      final toPerson = person(toHint);
+      final from = walletByName(fromHint) ??
+          (adminWallets.isNotEmpty ? adminWallets.first : null);
+      if (toPerson != null) {
+        final pw = walletOf(toPerson);
+        if (from == null || pw == null) return _snack('تعذّر تحديد المحافظ.');
+        if (!await _confirmCmd(
+            'تحويل ${amount.toStringAsFixed(0)} ج من ${from.name} إلى ${toPerson.name}؟')) {
+          return;
+        }
+        final err = await _db.transferBetweenWallets(widget.groupId,
+            fromWalletId: from.id,
+            toWalletId: pw.id,
+            amount: amount,
+            byName: user.name,
+            byPhone: user.phone);
+        await done(
+            err, 'تم تحويل ${amount.toStringAsFixed(0)} ج إلى ${toPerson.name}',
+            targets: [user.id, toPerson.id]);
+        return;
+      }
+      // Wallet → wallet. Whatever the message didn't specify, ask for it.
+      var fromW = walletByName(fromHint);
+      fromW ??= await _pickAnyWallet(title: 'حوّل من أي محفظة؟');
+      if (fromW == null) return _snack('لا توجد محافظ.');
+      if (fromW == _walletSelectionCancelled) return;
+      var toW = walletByName(toHint);
+      toW ??=
+          await _pickAnyWallet(title: 'إلى أي محفظة؟', excludeId: fromW.id);
+      if (toW == null) return _snack('لا توجد محفظة أخرى للتحويل إليها.');
+      if (toW == _walletSelectionCancelled) return;
+      if (fromW.id == toW.id) return _snack('اختر محفظتين مختلفتين.');
+      if (!await _confirmCmd(
+          'تحويل ${amount.toStringAsFixed(0)} ج من ${fromW.name} إلى ${toW.name}؟')) {
+        return;
+      }
+      final err = await budget.transfer(widget.groupId,
+          fromWalletId: fromW.id,
+          toWalletId: toW.id,
+          amount: amount,
+          byName: user.name,
+          byPhone: user.phone);
+      await done(err, 'تم التحويل بنجاح');
+      return;
+    }
+
+    if (intent == 'withdraw') {
+      final p = person(fromHint);
+      if (p != null) {
+        final pw = walletOf(p);
+        final to = adminWallets.isNotEmpty ? adminWallets.first : null;
+        if (pw == null || to == null) return _snack('تعذّر تحديد المحافظ.');
+        if (!await _confirmCmd(
+            'سحب ${amount.toStringAsFixed(0)} ج من ${p.name} إلى ${to.name}؟')) {
+          return;
+        }
+        final err = await _db.transferBetweenWallets(widget.groupId,
+            fromWalletId: pw.id,
+            toWalletId: to.id,
+            amount: amount,
+            byName: user.name,
+            byPhone: user.phone);
+        await done(err, 'تم سحب ${amount.toStringAsFixed(0)} ج من ${p.name}',
+            targets: [user.id, p.id]);
+        return;
+      }
+      var w = walletByName(fromHint);
+      w ??= await _pickAnyWallet(title: 'تسحب نقدًا من أي محفظة؟');
+      if (w == null) return _snack('لا توجد محافظ.');
+      if (w == _walletSelectionCancelled) return;
+      if (!await _confirmCmd(
+          'سحب نقدي ${amount.toStringAsFixed(0)} ج من ${w.name}؟')) {
+        return;
+      }
+      final err = await budget.walletCashMovement(widget.groupId, w.id, amount,
+          deposit: false, byName: user.name, byPhone: user.phone);
+      await done(err, 'تم سحب ${amount.toStringAsFixed(0)} ج من ${w.name}');
+      return;
+    }
+
+    // intent == 'add'
+    final p = person(toHint);
+    if (p != null) {
+      final pw = walletOf(p);
+      final from = adminWallets.isNotEmpty ? adminWallets.first : null;
+      if (from == null) return _snack('أضف محفظة نقدية لك أولًا من الإعدادات.');
+      if (pw == null) return _snack('محفظة ${p.name} غير جاهزة بعد.');
+      if (!await _confirmCmd(
+          'إضافة ${amount.toStringAsFixed(0)} ج إلى ${p.name} من ${from.name}؟')) {
+        return;
+      }
+      final err = await _db.transferBetweenWallets(widget.groupId,
+          fromWalletId: from.id,
+          toWalletId: pw.id,
+          amount: amount,
+          byName: user.name,
+          byPhone: user.phone);
+      await done(err, 'تم إضافة ${amount.toStringAsFixed(0)} ج إلى ${p.name}',
+          targets: [user.id, p.id]);
+      return;
+    }
+    var w = walletByName(toHint, adminOnly: true);
+    w ??= await _pickAnyWallet(title: 'تضيف الفلوس في أي محفظة؟', adminOnly: true);
+    if (w == null || w == _walletSelectionCancelled) return;
+    if (!await _confirmCmd('إضافة ${amount.toStringAsFixed(0)} ج في ${w.name}؟')) {
+      return;
+    }
+    final err = await context
+        .read<ChatProvider>()
+        .injectToWallet(widget.groupId, user, amount, w, note: text);
+    await done(err, '');
   }
 
   Future<WalletModel?> _pickWalletForExpense(double amount) async {
@@ -535,11 +790,15 @@ class _ChatScreenState extends State<ChatScreen> {
   /// [_walletSelectionCancelled] on cancel, or null if there are no wallets.
   /// If [hint] matches a wallet name, it is chosen without prompting.
   Future<WalletModel?> _pickAnyWallet(
-      {required String title, String? hint, bool adminOnly = false}) async {
+      {required String title,
+      String? hint,
+      bool adminOnly = false,
+      String? excludeId}) async {
     final budget = context.read<BudgetProvider>();
     final wallets = (adminOnly
             ? budget.wallets.where((w) => w.isAdminWallet)
             : budget.wallets)
+        .where((w) => excludeId == null || w.id != excludeId)
         .toList();
     if (wallets.isEmpty) return null;
 
@@ -591,31 +850,6 @@ class _ChatScreenState extends State<ChatScreen> {
     return selected ?? _walletSelectionCancelled;
   }
 
-  Future<void> _clearChat() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('مسح الشات'),
-        content: const Text(
-            'هل تريد مسح رسائل الشات من هذا الجهاز؟ المصاريف والتقارير ستظل محفوظة.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('مسح الشات')),
-        ],
-      ),
-    );
-    if (ok == true && mounted) {
-      await context.read<ChatProvider>().clearChat(widget.groupId);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم مسح الشات فقط. المصاريف محفوظة.')),
-      );
-    }
-  }
-
   Future<void> _deleteExpenseEntry(message) async {
     final auth = context.read<AuthProvider>();
     final user = auth.user;
@@ -654,7 +888,51 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Long-press menu for an expense: change its category (teaches the parser)
   /// or delete it.
-  Future<void> _showExpenseActions(ChatMessage message) async {
+  Widget _replyBanner() {
+    final r = _replyTo!;
+    final preview = r.type == MessageType.expense && r.amount != null
+        ? '${r.category ?? 'مصروف'}: ${r.amount!.toStringAsFixed(0)} ج'
+        : r.content;
+    return Container(
+      color: AppTheme.systemMessage,
+      padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+      child: Row(
+        children: [
+          Container(width: 3, height: 36, color: AppTheme.primaryGreen),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('رد على ${r.senderName}',
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.primaryGreen)),
+                Text(preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, size: 20),
+            tooltip: 'إلغاء الرد',
+            onPressed: () => setState(() => _replyTo = null),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Long-press menu for any message: reply (WhatsApp-style), plus the expense
+  /// edit/delete actions when the message is an editable expense.
+  Future<void> _showMessageActions(ChatMessage message, UserModel? user) async {
+    if (message.isDeleted || message.type == MessageType.system) return;
+    final canEditExpense = message.type == MessageType.expense &&
+        (message.senderId == user?.id || user?.isAdmin == true);
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -662,22 +940,39 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Wrap(
           children: [
             ListTile(
-              leading: const Icon(Icons.category_rounded),
-              title: const Text('تغيير النوع'),
-              onTap: () => Navigator.pop(ctx, 'recat'),
+              leading: const Icon(Icons.reply_rounded),
+              title: const Text('رد'),
+              onTap: () => Navigator.pop(ctx, 'reply'),
             ),
             ListTile(
-              leading:
-                  const Icon(Icons.delete_outline_rounded, color: Colors.red),
-              title: const Text('حذف الإدخال',
-                  style: TextStyle(color: Colors.red)),
-              onTap: () => Navigator.pop(ctx, 'delete'),
+              leading: const Icon(Icons.copy_rounded),
+              title: const Text('نسخ النص'),
+              onTap: () => Navigator.pop(ctx, 'copy'),
             ),
+            if (canEditExpense)
+              ListTile(
+                leading: const Icon(Icons.category_rounded),
+                title: const Text('تغيير النوع'),
+                onTap: () => Navigator.pop(ctx, 'recat'),
+              ),
+            if (canEditExpense)
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded,
+                    color: Colors.red),
+                title: const Text('حذف الإدخال',
+                    style: TextStyle(color: Colors.red)),
+                onTap: () => Navigator.pop(ctx, 'delete'),
+              ),
           ],
         ),
       ),
     );
-    if (action == 'delete') {
+    if (action == 'reply') {
+      if (mounted) setState(() => _replyTo = message);
+    } else if (action == 'copy') {
+      await Clipboard.setData(ClipboardData(text: message.content));
+      _snack('تم نسخ النص');
+    } else if (action == 'delete') {
       await _deleteExpenseEntry(message);
     } else if (action == 'recat') {
       await _recategorize(message);
@@ -752,6 +1047,43 @@ class _ChatScreenState extends State<ChatScreen> {
               'حاليًا الصورة محفوظة على هذا الجهاز فقط. في نسخة Firebase ستظهر على كل أجهزة العائلة.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  final nameC = TextEditingController(text: user.name);
+                  final newName = await showDialog<String>(
+                    context: ctx,
+                    builder: (dctx) => AlertDialog(
+                      title: const Text('تعديل اسمي'),
+                      content: TextField(
+                        controller: nameC,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                            labelText: 'الاسم', border: OutlineInputBorder()),
+                      ),
+                      actions: [
+                        TextButton(
+                            onPressed: () => Navigator.pop(dctx),
+                            child: const Text('إلغاء')),
+                        FilledButton(
+                            onPressed: () =>
+                                Navigator.pop(dctx, nameC.text.trim()),
+                            child: const Text('حفظ')),
+                      ],
+                    ),
+                  );
+                  nameC.dispose();
+                  if (newName == null || newName.isEmpty) return;
+                  await auth.updateMyName(newName);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (mounted) setState(() {});
+                },
+                icon: const Icon(Icons.edit_rounded),
+                label: const Text('تعديل اسمي'),
+              ),
             ),
             const SizedBox(height: 16),
             const Divider(),
@@ -1263,6 +1595,17 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           IconButton(
+            tooltip: 'تبديل العائلة/الحساب',
+            icon: const Icon(Icons.swap_horiz_rounded),
+            onPressed: () async {
+              final authProvider = context.read<AuthProvider>();
+              final navigator = Navigator.of(context);
+              await authProvider.switchAccount();
+              if (!mounted) return;
+              navigator.pushNamedAndRemoveUntil('/auth', (_) => false);
+            },
+          ),
+          IconButton(
             tooltip: 'تسجيل الخروج',
             icon: const Icon(Icons.logout_rounded),
             onPressed: () async {
@@ -1377,11 +1720,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           return ChatBubble(
                             message: msg,
                             isMe: msg.senderId == user?.id,
-                            canDelete: msg.type == MessageType.expense &&
-                                !msg.isDeleted &&
-                                (msg.senderId == user?.id ||
-                                    user?.isAdmin == true),
-                            onDelete: () => _showExpenseActions(msg),
+                            onLongPress: () => _showMessageActions(msg, user),
                           );
                         },
                       ),
@@ -1411,29 +1750,22 @@ class _ChatScreenState extends State<ChatScreen> {
                 style: const TextStyle(fontSize: 13, color: Colors.brown),
               ),
             ),
+          if (_replyTo != null) _replyBanner(),
           MessageInput(
             controller: _textController,
             onSend: () => _sendMessage(),
-            onMic: user?.canAddExpenses == false
-                ? () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('صلاحية تسجيل المصاريف غير مفعلة لك')),
-                    )
-                : (_isRecording
-                    ? () => unawaited(_finishVoiceRecordingAndConfirm())
-                    : _startRecording),
-            onMicDown: user?.canAddExpenses == false
-                ? null
-                : () => unawaited(_startRecording()),
-            onMicUp: user?.canAddExpenses == false
-                ? null
-                : () => unawaited(_finishVoiceRecordingAndConfirm()),
-            onMicCancel: user?.canAddExpenses == false
-                ? null
-                : () => unawaited(_finishVoiceRecordingAndConfirm()),
+            // Voice + chat are available to everyone; the expense-permission
+            // check happens when saving an expense (chat_provider), not here —
+            // so members can still send messages and dictate by voice.
+            onMic: _isRecording
+                ? () => unawaited(_finishVoiceRecordingAndConfirm())
+                : _startRecording,
+            onMicDown: () => unawaited(_startRecording()),
+            onMicUp: () => unawaited(_finishVoiceRecordingAndConfirm()),
+            onMicCancel: () => unawaited(_finishVoiceRecordingAndConfirm()),
             isRecording: _isRecording,
             isSending: _isSending,
-            enabled: user?.canAddExpenses != false && !budget.loading,
+            enabled: !budget.loading,
             onChanged: _updateParsedPreview,
           ),
         ],

@@ -119,6 +119,15 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Returns null on success, or an Arabic warning/error message for the UI.
+  /// Short snippet of the message being replied to, shown in the reply quote.
+  String _replyPreview(ChatMessage m) {
+    if (m.type == MessageType.expense && m.amount != null) {
+      return '${m.category ?? 'مصروف'}: ${m.amount!.toStringAsFixed(0)} ج';
+    }
+    final c = m.content.trim();
+    return c.length > 80 ? '${c.substring(0, 80)}…' : c;
+  }
+
   Future<String?> sendTextMessage(
     String groupId,
     UserModel user,
@@ -126,6 +135,7 @@ class ChatProvider extends ChangeNotifier {
     WalletModel? wallet,
     TeamModel? team,
     String? targetUserId,
+    ChatMessage? replyTo,
   }) async {
     if (AIService.isNextReportCommand(text)) {
       final sent = await sendNextReportPage(groupId);
@@ -264,6 +274,9 @@ class ChatProvider extends ChangeNotifier {
       timestamp: DateTime.now(),
       overCap: aiResult?['overCap'] == true,
       targetUserId: aiResult == null ? targetUserId : null,
+      replyToId: replyTo?.id,
+      replyToSender: replyTo?.senderName,
+      replyToText: replyTo == null ? null : _replyPreview(replyTo),
     );
     await _db.sendMessage(message);
 
@@ -479,24 +492,15 @@ class ChatProvider extends ChangeNotifier {
     }
     if (message.isDeleted) return 'هذا الإدخال محذوف بالفعل.';
 
-    final deleted =
-        await _db.deleteTransaction(groupId, message.transactionId!);
+    // deleteTransaction posts the wallet reversal itself (ledger integrity).
+    final deleted = await _db.deleteTransaction(
+      groupId,
+      message.transactionId!,
+      byName: user.name,
+      byPhone: user.phone,
+    );
     if (deleted == null)
       return 'لم أجد المصروف في السجلات. ربما تم حذفه من قبل.';
-    if (deleted.isExpense &&
-        deleted.walletId != null &&
-        deleted.walletId!.isNotEmpty) {
-      await _db.applyWalletDelta(
-        groupId,
-        deleted.walletId!,
-        deleted.amount,
-        source: 'reversal',
-        note: 'إرجاع: ${deleted.category}',
-        refTransactionId: deleted.id,
-        byName: user.name,
-        byPhone: user.phone,
-      );
-    }
 
     await _db.markTransactionMessageDeleted(groupId, message.transactionId!);
     await _db.addFamilyNotification(FamilyNotificationModel(

@@ -303,26 +303,90 @@ class DatabaseService {
     return FamilyMembership(group: group, member: toSave);
   }
 
-  /// All family memberships bound to a login [authUid] (for session restore).
+  /// All family memberships for the signed-in login (for session restore and
+  /// the login picker). Matches member docs by [authUid] AND by the Google
+  /// account's email — so a family still shows up even if its member doc's
+  /// authUid binding got tangled (e.g. one account used for two slots). Both
+  /// authUid and email are stamped onto a doc only when that person actually
+  /// signs in, so email matching never leaks families the user didn't join.
   Future<List<FamilyMembership>> getMembershipsByAuthUid(String authUid) async {
-    if (authUid.trim().isEmpty) return const [];
+    final email = (_authService.currentEmail ?? '').trim();
+    if (authUid.trim().isEmpty && email.isEmpty) return const [];
+
+    // Key by group + member doc, so if one login maps to more than one member
+    // in the same family (e.g. admin + a child) BOTH are offered.
+    final byKey = <String, FamilyMembership>{};
+    Future<void> ingest(
+        Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs) async {
+      for (final doc in docs) {
+        final groupRef = doc.reference.parent.parent;
+        if (groupRef == null) continue;
+        final member = UserModel.fromMap(doc.data());
+        final key = '${groupRef.id}/${member.id}';
+        if (byKey.containsKey(key)) continue;
+        final group = await getGroupById(groupRef.id);
+        if (group == null) continue;
+        byKey[key] = FamilyMembership(group: group, member: member);
+      }
+    }
+
+    if (authUid.trim().isNotEmpty) {
+      final q = await _fs
+          .collectionGroup('members')
+          .where('authUid', isEqualTo: authUid)
+          .limit(20)
+          .get();
+      await ingest(q.docs);
+    }
+    if (email.isNotEmpty) {
+      try {
+        final q = await _fs
+            .collectionGroup('members')
+            .where('email', isEqualTo: email)
+            .limit(20)
+            .get();
+        await ingest(q.docs);
+      } catch (_) {
+        // The email collection-group index may not be built yet; authUid
+        // matches above still cover the normal case.
+      }
+    }
+
+    final items = byKey.values.toList()
+      ..sort((a, b) {
+        final g = a.group.name.compareTo(b.group.name);
+        return g != 0 ? g : a.member.name.compareTo(b.member.name);
+      });
+    return items;
+  }
+
+  /// EVERY member document whose stored email equals [email], across all
+  /// families — no dedup. This is the literal "all accounts for this email"
+  /// list. Runs in the signed-in session (the members collection-group is
+  /// readable by any authenticated user). Throws if the email index isn't ready
+  /// yet, so the caller can surface that instead of hiding it.
+  Future<List<FamilyMembership>> membersByEmail(String email) async {
+    final e = email.trim();
+    if (e.isEmpty) return const [];
     final q = await _fs
         .collectionGroup('members')
-        .where('authUid', isEqualTo: authUid)
-        .limit(20)
+        .where('email', isEqualTo: e)
+        .limit(40)
         .get();
-    final byGroup = <String, FamilyMembership>{};
+    final out = <FamilyMembership>[];
+    final seen = <String>{};
     for (final doc in q.docs) {
       final groupRef = doc.reference.parent.parent;
-      if (groupRef == null || byGroup.containsKey(groupRef.id)) continue;
+      if (groupRef == null) continue;
+      final key = '${groupRef.id}/${doc.id}';
+      if (seen.contains(key)) continue;
+      seen.add(key);
       final group = await getGroupById(groupRef.id);
       if (group == null) continue;
-      byGroup[group.id] =
-          FamilyMembership(group: group, member: UserModel.fromMap(doc.data()));
+      out.add(FamilyMembership(
+          group: group, member: UserModel.fromMap(doc.data())));
     }
-    final items = byGroup.values.toList()
-      ..sort((a, b) => a.group.name.compareTo(b.group.name));
-    return items;
+    return out;
   }
 
   /// Admin pre-registers a member slot (pending until they join with their own
@@ -525,6 +589,43 @@ class DatabaseService {
     return items;
   }
 
+  /// Bind EVERY member doc whose phone matches [phone] to [authUid] — with NO
+  /// per-group dedup, so a login is reconnected to all of its slots at once,
+  /// including a family admin whose authUid binding got tangled. Returns how
+  /// many docs now point at [authUid].
+  Future<int> rebindMembersByPhone(String phone, String authUid) async {
+    final candidates = _phoneLookupCandidates(phone);
+    if (candidates.isEmpty || authUid.trim().isEmpty) return 0;
+    final seen = <String>{};
+    var count = 0;
+    for (final candidate in candidates) {
+      final q = await _fs
+          .collectionGroup('members')
+          .where('phone', isEqualTo: candidate)
+          .limit(30)
+          .get();
+      for (final doc in q.docs) {
+        final groupRef = doc.reference.parent.parent;
+        if (groupRef == null) continue;
+        final key = '${groupRef.id}/${doc.id}';
+        if (seen.contains(key)) continue;
+        seen.add(key);
+        final member = UserModel.fromMap(doc.data());
+        if (member.authUid == authUid) {
+          count++; // already bound to this login
+          continue;
+        }
+        try {
+          await bindMemberAuthUid(groupRef.id, member, authUid);
+          count++;
+        } catch (_) {
+          // Skip a doc we couldn't write; keep rebinding the rest.
+        }
+      }
+    }
+    return count;
+  }
+
   Future<List<TeamMembership>> findTeamMembershipsByPhone(String phone) async {
     final candidates = _phoneLookupCandidates(phone);
     if (candidates.isEmpty) return const [];
@@ -560,6 +661,64 @@ class DatabaseService {
     final items = byKey.values.toList()
       ..sort((a, b) => a.team.name.compareTo(b.team.name));
     return items;
+  }
+
+  /// Point a family's admin pointer at [adminId]. Used by admin recovery so the
+  /// family has a real admin again even if the original record was overwritten.
+  Future<void> setGroupAdminId(String groupId, String adminId) async {
+    await _families
+        .doc(groupId)
+        .set({'adminId': adminId}, SetOptions(merge: true));
+  }
+
+  /// Scenario A — the family's admin row still exists: reconnect it to [authUid]
+  /// (and email), and re-assert the admin role. Role of every other row is
+  /// untouched; nothing is merged or deleted.
+  Future<void> reconnectAdminRow(
+      String groupId, UserModel admin, String authUid, String? email) async {
+    final updated = admin.copyWith(
+      authUid: authUid,
+      email: email ?? admin.email,
+      isAdmin: true,
+      canManageMembers: true,
+      canManageBudgets: true,
+      canViewReports: true,
+      canAddExpenses: true,
+      phoneVerified: true,
+      // Strip any worker tag: if this row had been overwritten by a worker
+      // created with the admin's own phone, it must become a clean family
+      // admin again (isWorker is false when teamId is empty).
+      teamId: '',
+    );
+    await _members(groupId)
+        .doc(admin.id)
+        .set(updated.toMap(), SetOptions(merge: true));
+  }
+
+  /// Scenario B — `adminId` is a dangling pointer (the row was deleted): create
+  /// the admin row at exactly [adminId], bound to [authUid]. The phone is
+  /// recovered from the id (`phone_<phone>`), and the adminId pointer is
+  /// re-affirmed so the family is consistent.
+  Future<void> recreateAdminRow(
+      String groupId, String adminId, String authUid,
+      {required String name, String? email}) async {
+    final phone =
+        adminId.startsWith('phone_') ? adminId.substring('phone_'.length) : '';
+    final admin = UserModel(
+      id: adminId,
+      name: name,
+      phone: phone.isEmpty ? null : phone,
+      authUid: authUid,
+      email: email,
+      isAdmin: true,
+      canAddExpenses: true,
+      canViewReports: true,
+      canManageMembers: true,
+      canManageBudgets: true,
+      phoneVerified: true,
+    );
+    await _members(groupId).doc(adminId).set(admin.toMap());
+    await setGroupAdminId(groupId, adminId);
   }
 
   Future<void> joinGroup(String groupId, UserModel user) async {
@@ -659,6 +818,90 @@ class DatabaseService {
       String groupId, String userId, String photoPath) async {
     await updateMember(
         groupId, userId, (member) => member.copyWith(photoUrl: photoPath));
+  }
+
+  /// Edit a person's display name and/or spending limit in place (no re-key).
+  Future<void> updateMemberNameLimit(
+    String groupId,
+    String userId, {
+    String? name,
+    double? monthlyLimit,
+  }) async {
+    await updateMember(
+      groupId,
+      userId,
+      (m) => m.copyWith(
+        name: (name == null || name.trim().isEmpty) ? m.name : name.trim(),
+        monthlyLimit: monthlyLimit ?? m.monthlyLimit,
+      ),
+    );
+  }
+
+  /// Change a PENDING member's phone — the join key. Re-keys the member doc to
+  /// `phone_<newPhone>` and moves its references (wallet owner, family
+  /// memberIds, and team membership for a worker). Refused once the record has
+  /// joined (a real login is bound) so a live identity is never re-keyed.
+  /// Returns an Arabic error, or null on success.
+  Future<String?> changePendingMemberPhone(
+      String groupId, UserModel member, String newPhoneRaw) async {
+    if (member.joined) {
+      return 'لا يمكن تغيير رقم الهاتف بعد انضمام الحساب — الرقم يصبح ثابتًا.';
+    }
+    final newPhone = _authService.normalizePhone(newPhoneRaw);
+    if (newPhone.length < 8) return 'اكتب رقم موبايل صحيح.';
+    final oldId = member.id;
+    final newId = _authService.memberIdForPhone(newPhone);
+    if (newId == oldId) return null; // unchanged
+    final existingByPhone = await getMemberByPhone(groupId, newPhone);
+    final existingDoc = await _members(groupId).doc(newId).get();
+    if (existingByPhone != null || existingDoc.exists) {
+      return 'هذا الرقم مستخدم بالفعل لحساب آخر في هذه العائلة.';
+    }
+    // 1) the re-keyed member doc.
+    final moved = member.copyWith(id: newId, phone: newPhone);
+    await _members(groupId).doc(newId).set(moved.toMap());
+    // 2) move the member's wallet (looked up by ownerId, so just retag it).
+    final wallets = await getWalletsSync(groupId);
+    for (final w in wallets) {
+      if (w.isMemberWallet && w.ownerId == oldId) {
+        await _wallets(groupId)
+            .doc(w.id)
+            .set({'ownerId': newId}, SetOptions(merge: true));
+      }
+    }
+    // 3) family memberIds list (best-effort).
+    final famSnap = await _families.doc(groupId).get();
+    final ids =
+        List<String>.from((famSnap.data()?['memberIds'] ?? const []) as List);
+    if (ids.contains(oldId)) {
+      final newIds =
+          ids.map((id) => id == oldId ? newId : id).toSet().toList();
+      await _families
+          .doc(groupId)
+          .set({'memberIds': newIds}, SetOptions(merge: true));
+    }
+    // 4) a worker's team membership.
+    final teamId = member.teamId;
+    if (teamId != null && teamId.isNotEmpty) {
+      final team = await getTeamById(groupId, teamId);
+      if (team != null) {
+        final tIds =
+            team.memberIds.map((id) => id == oldId ? newId : id).toSet().toList();
+        final names = Map<String, String>.from(team.memberNames);
+        final phones = Map<String, String>.from(team.memberPhones);
+        if (names.containsKey(oldId)) names[newId] = names.remove(oldId)!;
+        phones.remove(oldId);
+        phones[newId] = newPhone;
+        await _teams(groupId).doc(teamId).set({
+          'memberIds': tIds,
+          'memberNames': names,
+          'memberPhones': phones,
+        }, SetOptions(merge: true));
+      }
+    }
+    // 5) remove the old record.
+    await _members(groupId).doc(oldId).delete();
+    return null;
   }
 
   Future<void> updateMemberPermissions(
@@ -967,13 +1210,32 @@ class DatabaseService {
     }
   }
 
+  /// Delete a transaction AND undo its effect on the ledger. For an expense
+  /// this posts a reversing entry (+amount) back into the wallet it was charged
+  /// to, so the wallet's accumulated balance returns to where it was, then it
+  /// refreshes the member's monthly spending and the budgets. Doing the
+  /// reversal here (not in the callers) guarantees no delete path can leave the
+  /// wallet under-counted.
   Future<TransactionModel?> deleteTransaction(
-      String groupId, String transactionId) async {
+      String groupId, String transactionId,
+      {String? byName, String? byPhone}) async {
     final doc = await _transactions(groupId).doc(transactionId).get();
     if (!doc.exists || doc.data() == null) return null;
     final deleted = TransactionModel.fromMap(doc.data()!);
     await doc.reference.delete();
     if (deleted.isExpense) {
+      if ((deleted.walletId ?? '').isNotEmpty) {
+        await applyWalletDelta(
+          groupId,
+          deleted.walletId!,
+          deleted.amount, // + : put the spent money back into the wallet
+          source: 'reversal',
+          note: 'إرجاع: ${deleted.category}',
+          refTransactionId: deleted.id,
+          byName: byName,
+          byPhone: byPhone,
+        );
+      }
       final currentSpend =
           await getMemberMonthlySpending(groupId, deleted.userId);
       await updateMember(
@@ -1480,6 +1742,27 @@ class DatabaseService {
       if (key.isNotEmpty && cat.isNotEmpty) map[key] = cat;
     }
     return map;
+  }
+
+  /// Learned word→category entries WITH their doc id, for the admin review
+  /// screen (so wrong ones can be deleted).
+  Future<List<Map<String, String>>> getLearnedKeywordEntries(
+      String groupId) async {
+    final q = await _learnedKeywords(groupId).get();
+    final list = <Map<String, String>>[];
+    for (final d in q.docs) {
+      final data = d.data();
+      final kw = (data['keyword'] ?? '').toString();
+      final cat = (data['category'] ?? '').toString();
+      if (kw.isEmpty || cat.isEmpty) continue;
+      list.add({'id': d.id, 'keyword': kw, 'category': cat});
+    }
+    list.sort((a, b) => a['keyword']!.compareTo(b['keyword']!));
+    return list;
+  }
+
+  Future<void> deleteLearnedKeyword(String groupId, String id) async {
+    await _learnedKeywords(groupId).doc(id).delete();
   }
 
   Future<void> addLearnedKeyword(

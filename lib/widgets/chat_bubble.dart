@@ -6,15 +6,14 @@ import '../models/chat_message_model.dart';
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
   final bool isMe;
-  final bool canDelete;
-  final VoidCallback? onDelete;
+  // Long-press opens the message actions sheet (reply / delete).
+  final VoidCallback? onLongPress;
 
   const ChatBubble({
     super.key,
     required this.message,
     required this.isMe,
-    this.canDelete = false,
-    this.onDelete,
+    this.onLongPress,
   });
 
   @override
@@ -83,7 +82,7 @@ class ChatBubble extends StatelessWidget {
               ),
             ),
           GestureDetector(
-            onLongPress: canDelete && !isDeleted ? onDelete : null,
+            onLongPress: isDeleted ? null : onLongPress,
             child: Container(
               constraints: const BoxConstraints(
                 maxWidth: 300,
@@ -109,6 +108,7 @@ class ChatBubble extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if ((message.replyToText ?? '').isNotEmpty) _replyQuote(),
                       if (isExpense && message.amount != null && !isDeleted) ...[
                         Row(
                           mainAxisSize: MainAxisSize.min,
@@ -187,6 +187,40 @@ class ChatBubble extends StatelessWidget {
               ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _replyQuote() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: const Border(
+          right: BorderSide(color: AppTheme.primaryGreen, width: 3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            message.replyToSender ?? '',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: AppTheme.primaryGreen,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            message.replyToText ?? '',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
           ),
         ],
       ),

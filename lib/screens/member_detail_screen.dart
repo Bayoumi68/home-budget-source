@@ -4,11 +4,13 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../config/theme.dart';
 import '../models/chat_message_model.dart';
+import '../models/family_notification_model.dart';
 import '../models/user_model.dart';
 import '../models/wallet_model.dart';
 import '../models/wallet_entry_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/database_service.dart';
+import '../services/voice_service.dart';
 
 /// Admin's view of a single member: their wallet, fund/withdraw, and a direct
 /// message box. The message is delivered to the member's chat (targetUserId).
@@ -29,24 +31,67 @@ class MemberDetailScreen extends StatefulWidget {
 
 class _MemberDetailScreenState extends State<MemberDetailScreen> {
   final _db = DatabaseService();
+  final _voice = VoiceService();
   final _money = NumberFormat('#,###');
   final _msgController = TextEditingController();
+  late UserModel _member;
   bool _loading = true;
   bool _busy = false;
+  bool _isRecording = false;
   WalletModel? _wallet;
   List<WalletEntryModel> _entries = [];
   List<WalletModel> _adminWallets = [];
+  List<ChatMessage> _history = [];
 
   @override
   void initState() {
     super.initState();
+    _member = widget.member;
     _load();
   }
 
   @override
   void dispose() {
+    _voice.dispose();
     _msgController.dispose();
     super.dispose();
+  }
+
+  Future<void> _toggleMic() async {
+    if (_isRecording) {
+      await _voice.stopListening();
+      if (mounted) setState(() => _isRecording = false);
+      return;
+    }
+    final ok = await _voice.initialize(onError: (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('مشكلة في الميكروفون: $e')));
+      }
+    });
+    if (!ok) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_voice.lastError ?? 'الميكروفون غير متاح.')));
+      }
+      return;
+    }
+    if (mounted) setState(() => _isRecording = true);
+    await _voice.startListening(
+      (result, isFinal) {
+        _msgController.text = result;
+        _msgController.selection =
+            TextSelection.fromPosition(TextPosition(offset: result.length));
+      },
+      onError: (e) {
+        if (mounted) setState(() => _isRecording = false);
+      },
+      onStatus: (status) {
+        if ((status == 'done' || status == 'notListening') && mounted) {
+          setState(() => _isRecording = false);
+        }
+      },
+    );
   }
 
   Future<void> _load() async {
@@ -56,7 +101,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
       final wallets = await _db.getWalletsSync(widget.groupId);
       WalletModel? mine;
       for (final w in wallets) {
-        if (w.isMemberWallet && w.ownerId == widget.member.id) {
+        if (w.isMemberWallet && w.ownerId == _member.id) {
           mine = w;
           break;
         }
@@ -64,11 +109,21 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
       final entries = mine == null
           ? <WalletEntryModel>[]
           : await _db.getWalletEntriesSync(widget.groupId, mine.id);
+      // Conversation with this member: messages they sent, or directed to them.
+      final allMsgs = await _db.getMessagesSync(widget.groupId);
+      final history = allMsgs
+          .where((m) =>
+              !m.isDeleted &&
+              m.type != MessageType.system &&
+              (m.senderId == _member.id || m.targetUserId == _member.id))
+          .toList()
+        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
       if (!mounted) return;
       setState(() {
         _wallet = mine;
         _entries = entries;
         _adminWallets = wallets.where((w) => w.isAdminWallet).toList();
+        _history = history;
         _loading = false;
       });
     } catch (_) {
@@ -92,8 +147,8 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialog) => AlertDialog(
           title: Text(withdraw
-              ? 'سحب من ${widget.member.name}'
-              : 'تمويل ${widget.member.name}'),
+              ? 'سحب من ${_member.name}'
+              : 'تمويل ${_member.name}'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -164,8 +219,113 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
       content: Text(error ??
           (withdraw
               ? 'تم سحب ${_money.format(amount)} ج'
-              : 'تم تمويل ${widget.member.name} بـ ${_money.format(amount)} ج')),
+              : 'تم تمويل ${_member.name} بـ ${_money.format(amount)} ج')),
     ));
+  }
+
+  /// Admin edits a member's details. Name + limit are saved in place; the phone
+  /// (the join key) is editable only while the member is still pending — once
+  /// they've joined it's locked. A phone change re-keys the record.
+  Future<void> _editDetails() async {
+    final m = _member;
+    final nameC = TextEditingController(text: m.name);
+    final phoneC = TextEditingController(text: m.phone ?? '');
+    final limitC = TextEditingController(
+        text: m.monthlyLimit > 0 ? m.monthlyLimit.toStringAsFixed(0) : '');
+    final canEditPhone = !m.joined;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('تعديل بيانات ${m.name}'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameC,
+                decoration: const InputDecoration(
+                    labelText: 'الاسم', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: phoneC,
+                enabled: canEditPhone,
+                keyboardType: TextInputType.phone,
+                textDirection: ui.TextDirection.ltr,
+                decoration: InputDecoration(
+                  labelText: 'رقم الهاتف',
+                  border: const OutlineInputBorder(),
+                  helperText: canEditPhone
+                      ? 'يمكن تعديله قبل انضمام العضو فقط'
+                      : 'ثابت بعد انضمام العضو',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: limitC,
+                keyboardType: TextInputType.number,
+                textDirection: ui.TextDirection.ltr,
+                decoration: const InputDecoration(
+                  labelText: 'حد الإنفاق الشهري (0 = بدون)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              if ((m.email ?? '').isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text('البريد: ${m.email}',
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.grey)),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('حفظ')),
+        ],
+      ),
+    );
+    final newName = nameC.text.trim();
+    final newPhone = phoneC.text.trim();
+    final newLimit =
+        double.tryParse(limitC.text.trim().replaceAll(',', '.')) ??
+            m.monthlyLimit;
+    nameC.dispose();
+    phoneC.dispose();
+    limitC.dispose();
+    if (ok != true || !mounted) return;
+    setState(() => _busy = true);
+    await _db.updateMemberNameLimit(widget.groupId, m.id,
+        name: newName, monthlyLimit: newLimit);
+    final phoneChanged =
+        canEditPhone && newPhone.isNotEmpty && newPhone != (m.phone ?? '');
+    String? phoneErr;
+    if (phoneChanged) {
+      phoneErr = await _db.changePendingMemberPhone(widget.groupId, m, newPhone);
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (phoneErr != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(phoneErr)));
+      return;
+    }
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('تم حفظ التعديلات')));
+    if (phoneChanged) {
+      // The record was re-keyed → go back so the list reloads the new record.
+      Navigator.pop(context);
+    } else {
+      setState(() => _member =
+          _member.copyWith(name: newName, monthlyLimit: newLimit));
+    }
   }
 
   Future<void> _sendMessage() async {
@@ -184,16 +344,57 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
         type: MessageType.text,
         content: text,
         timestamp: DateTime.now(),
-        targetUserId: widget.member.id,
+        targetUserId: _member.id,
+      ));
+      // Notify both the admin and the member of this message.
+      await _db.addFamilyNotification(FamilyNotificationModel(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        groupId: widget.groupId,
+        title: 'رسالة من ${admin.name}',
+        body: text,
+        actorId: admin.id,
+        actorName: admin.name,
+        timestamp: DateTime.now(),
+        targetUserIds: [admin.id, _member.id],
       ));
       _msgController.clear();
+      await _load();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('تم إرسال الرسالة إلى ${widget.member.name}')));
+            content: Text('تم إرسال الرسالة إلى ${_member.name}')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Widget _historyBubble(ChatMessage m) {
+    final fromMember = m.senderId == _member.id;
+    return Align(
+      alignment: fromMember ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.all(10),
+        constraints: const BoxConstraints(maxWidth: 280),
+        decoration: BoxDecoration(
+          color: fromMember
+              ? AppTheme.otherMessageBubble
+              : AppTheme.myMessageBubble,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(m.type == MessageType.expense && m.amount != null
+                ? '${m.category ?? 'مصروف'}: ${m.amount!.toStringAsFixed(0)} ج'
+                : m.content),
+            const SizedBox(height: 2),
+            Text(DateFormat('MM/dd HH:mm').format(m.timestamp),
+                style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -201,7 +402,16 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
     final w = _wallet;
     return Scaffold(
       appBar: AppBar(
-          title: Text(widget.selfView ? 'محفظتي' : widget.member.name)),
+        title: Text(widget.selfView ? 'محفظتي' : _member.name),
+        actions: [
+          if (!widget.selfView)
+            IconButton(
+              tooltip: 'تعديل البيانات',
+              icon: const Icon(Icons.edit_rounded),
+              onPressed: _busy ? null : _editDetails,
+            ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -222,11 +432,15 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('محفظة ${widget.member.name}',
+                                  Text('محفظة ${_member.name}',
                                       style: const TextStyle(
                                           fontWeight: FontWeight.bold)),
-                                  if (widget.member.phone != null)
-                                    Text(widget.member.phone!,
+                                  if (_member.phone != null)
+                                    Text(_member.phone!,
+                                        style: const TextStyle(
+                                            fontSize: 12, color: Colors.grey)),
+                                  if ((_member.email ?? '').isNotEmpty)
+                                    Text(_member.email!,
                                         style: const TextStyle(
                                             fontSize: 12, color: Colors.grey)),
                                 ],
@@ -278,18 +492,43 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                 _ledger(),
                 if (!widget.selfView) ...[
                   const SizedBox(height: 16),
+                  const Text('المحادثة مع العضو',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  if (_history.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text('لا توجد رسائل بعد.',
+                          style: TextStyle(color: Colors.grey)),
+                    )
+                  else
+                    ..._history.map(_historyBubble),
+                  const SizedBox(height: 16),
                   const Text('رسالة للعضو',
                       style:
                           TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Row(
                     children: [
+                      IconButton(
+                        onPressed: _busy ? null : _toggleMic,
+                        tooltip: _isRecording ? 'إيقاف' : 'تحدّث',
+                        icon: Icon(
+                          _isRecording
+                              ? Icons.stop_circle_rounded
+                              : Icons.mic_rounded,
+                          color: _isRecording
+                              ? Colors.red
+                              : AppTheme.primaryGreen,
+                        ),
+                      ),
                       Expanded(
                         child: TextField(
                           controller: _msgController,
                           textDirection: ui.TextDirection.rtl,
                           decoration: const InputDecoration(
-                            hintText: 'اكتب رسالة تظهر في شات العضو...',
+                            hintText: 'اكتب أو تحدّث برسالة تظهر في شات العضو...',
                             border: OutlineInputBorder(),
                           ),
                         ),

@@ -47,6 +47,11 @@ android {
                 storeFile = (keystoreProperties["storeFile"] as String?)?.let { file(it) }
                 storePassword = keystoreProperties["storePassword"] as String?
             }
+            // Sign with all schemes (v1 JAR + v2 + v3) for the widest install
+            // compatibility across Android versions.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
