@@ -1,0 +1,9 @@
+# Release signing config — copy to `key.properties` (gitignored) and fill in.
+# Create a keystore first, e.g.:
+#   keytool -genkey -v -keystore release-keystore.jks -keyalg RSA -keysize 2048 \
+#           -validity 10000 -alias myalias
+# storeFile is resolved relative to the android/app/ folder.
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=myalias
+storeFile=release-keystore.jks

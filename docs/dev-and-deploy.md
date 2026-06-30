@@ -61,6 +61,7 @@ automation:
 
 ## See also
 
+- [Firebase Setup](firebase-setup.md) — wire the app to your own Firebase project
 - [Overview](overview.md)
 - [Architecture](architecture.md)
 - [Authentication & Family Model](auth-and-family-model.md)

@@ -13,3 +13,5 @@ transaction, then rolls it up into shared budgets and analytics.
   vs. join, session restore.
 - [Development & Deployment](dev-and-deploy.md) — toolchain, Firebase project, repositories,
   and build/run/deploy steps.
+- [Firebase Setup](firebase-setup.md) — point the app at **your own** Firebase project: every
+  project-specific value to replace, plus step-by-step console + CLI wiring.
