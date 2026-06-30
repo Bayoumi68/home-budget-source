@@ -66,7 +66,6 @@ class _ChatScreenState extends State<ChatScreen> {
   int _lastUnreadCount = 0;
   String? _lastShownNotificationId;
   bool _notificationListenerReady = false;
-  String _voiceText = '';
   String? _lastSubmittedText;
   DateTime? _lastSubmittedAt;
   String? _lastParsedPreview;
@@ -276,7 +275,6 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         await chat.refreshMessages(widget.groupId);
       } finally {
-        _voiceText = '';
         if (mounted) setState(() => _isSending = false);
       }
       _scrollToBottom();
@@ -294,10 +292,14 @@ class _ChatScreenState extends State<ChatScreen> {
       } catch (e) {
         if (mounted) _snack('تعذّر تنفيذ الأمر: $e');
       } finally {
-        await context.read<ChatProvider>().refreshMessages(widget.groupId);
+        // Reset send state FIRST (synchronously) so a failing/slow refresh can
+        // never leave the input stuck on "pending" and blocking all sends.
         _lastSubmittedText = null;
         _lastSubmittedAt = null;
         if (mounted) setState(() => _isSending = false);
+        try {
+          await context.read<ChatProvider>().refreshMessages(widget.groupId);
+        } catch (_) {}
         _scrollToBottom();
       }
       return;
@@ -353,7 +355,6 @@ class _ChatScreenState extends State<ChatScreen> {
               .showSnackBar(SnackBar(content: Text(warning)));
         }
       } finally {
-        _voiceText = '';
         if (mounted) setState(() => _isSending = false);
       }
       _scrollToBottom();
@@ -460,7 +461,6 @@ class _ChatScreenState extends State<ChatScreen> {
             .showSnackBar(SnackBar(content: Text(warning)));
       }
     } finally {
-      _voiceText = '';
       if (mounted) setState(() => _isSending = false);
     }
     _scrollToBottom();
@@ -1256,7 +1256,6 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       return;
     }
-    _voiceText = '';
     _textController.clear();
     setState(() {
       _isRecording = true;
@@ -1265,7 +1264,6 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await _voiceService.startListening(
         (result, isFinal) {
-          _voiceText = result;
           _textController.text = result;
           _textController.selection =
               TextSelection.fromPosition(TextPosition(offset: result.length));
@@ -1305,88 +1303,12 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _finishVoiceRecordingAndConfirm() async {
-    if (_isConfirmingVoice) return;
-    if (!_isRecording && _voiceText.trim().isEmpty) return;
-    _isConfirmingVoice = true;
-    try {
-      await _voiceService.stopListening();
-      if (mounted) {
-        setState(() {
-          _isRecording = false;
-          _isPreparingVoice = true;
-        });
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      final text = _voiceText.trim();
-      if (!mounted) return;
-      setState(() => _isPreparingVoice = false);
-      if (text.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('لم أسمع كلام واضح. اضغط مطولًا وتكلم مرة أخرى.')),
-        );
-        return;
-      }
-      await _confirmVoiceText(text);
-    } finally {
-      if (mounted) {
-        setState(() => _isPreparingVoice = false);
-      }
-      _isConfirmingVoice = false;
-    }
-  }
-
-  Future<void> _confirmVoiceText(String text) async {
-    final clean = text.trim();
-    if (clean.isEmpty || !mounted) return;
-    final parsedItems = AIService.parseExpenseMessages(clean);
-    final parsed = parsedItems.length == 1 ? parsedItems.first : null;
-    final report = AIService.parseReportRequest(clean);
-    final preview = parsedItems.length > 1
-        ? _multipleExpenseSummary(parsedItems)
-        : parsed != null
-            ? AIService.formatExpenseText(parsed)
-            : report != null
-                ? 'طلب تقرير: $clean'
-                : clean;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تأكيد الرسالة الصوتية'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('سمعت منك:'),
-            const SizedBox(height: 8),
-            SelectableText(clean, textDirection: ui.TextDirection.rtl),
-            const SizedBox(height: 12),
-            Text(preview, style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            const Text('هل تريد إرسالها وتسجيلها؟'),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('تعديل')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('نعم، أرسل')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      _voiceText = '';
-      _textController.clear();
-      if (mounted) {
-        setState(() => _lastParsedPreview = null);
-      }
-      await _sendMessage(clean, true);
-    } else {
-      _putTextInInput(clean);
-    }
+  /// Stop dictation. The transcribed text is already in the input box (filled
+  /// live while listening); the user reviews it and taps SEND. The mic never
+  /// sends on its own — one consistent flow everywhere.
+  Future<void> _stopVoice() async {
+    await _voiceService.stopListening();
+    if (mounted) setState(() => _isRecording = false);
   }
 
   Future<bool?> _confirmMultipleExpenses(List<Map<String, dynamic>> items) {
@@ -1789,15 +1711,13 @@ class _ChatScreenState extends State<ChatScreen> {
           MessageInput(
             controller: _textController,
             onSend: () => _sendMessage(),
-            // Voice + chat are available to everyone; the expense-permission
-            // check happens when saving an expense (chat_provider), not here —
-            // so members can still send messages and dictate by voice.
+            // One consistent flow: tap the mic to start dictation, tap again to
+            // stop — the text lands in the box, then you tap SEND. The mic never
+            // sends by itself. (Expense-permission is enforced on save, not here,
+            // so any member can dictate/message.)
             onMic: _isRecording
-                ? () => unawaited(_finishVoiceRecordingAndConfirm())
+                ? () => unawaited(_stopVoice())
                 : _startRecording,
-            onMicDown: () => unawaited(_startRecording()),
-            onMicUp: () => unawaited(_finishVoiceRecordingAndConfirm()),
-            onMicCancel: () => unawaited(_finishVoiceRecordingAndConfirm()),
             isRecording: _isRecording,
             isSending: _isSending,
             enabled: !budget.loading,

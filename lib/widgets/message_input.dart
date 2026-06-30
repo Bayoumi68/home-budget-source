@@ -1,6 +1,5 @@
 import 'dart:ui' as ui;
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 
@@ -8,9 +7,6 @@ class MessageInput extends StatelessWidget {
   final TextEditingController controller;
   final VoidCallback onSend;
   final VoidCallback onMic;
-  final VoidCallback? onMicDown;
-  final VoidCallback? onMicUp;
-  final VoidCallback? onMicCancel;
   final ValueChanged<String>? onChanged;
   final bool isRecording;
   final bool isSending;
@@ -21,9 +17,6 @@ class MessageInput extends StatelessWidget {
     required this.controller,
     required this.onSend,
     required this.onMic,
-    this.onMicDown,
-    this.onMicUp,
-    this.onMicCancel,
     this.onChanged,
     this.isRecording = false,
     this.isSending = false,
@@ -49,15 +42,6 @@ class MessageInput extends StatelessWidget {
           children: [
             GestureDetector(
               onTap: enabled && !isSending ? onMic : null,
-              onLongPressStart: enabled && !isSending && !kIsWeb
-                  ? (_) => (onMicDown ?? onMic)()
-                  : null,
-              onLongPressEnd: enabled && !isSending && !kIsWeb
-                  ? (_) => (onMicUp ?? onMic)()
-                  : null,
-              onLongPressCancel: enabled && !isSending && !kIsWeb
-                  ? () => (onMicCancel ?? onMicUp ?? onMic)()
-                  : null,
               child: Container(
                 width: 44,
                 height: 44,
