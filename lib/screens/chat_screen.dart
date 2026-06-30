@@ -289,12 +289,17 @@ class _ChatScreenState extends State<ChatScreen> {
     if (moneyCmd != null) {
       _textController.clear();
       setState(() => _lastParsedPreview = null);
-      await _handleMoneyCommand(moneyCmd);
-      await context.read<ChatProvider>().refreshMessages(widget.groupId);
-      _lastSubmittedText = null;
-      _lastSubmittedAt = null;
-      if (mounted) setState(() => _isSending = false);
-      _scrollToBottom();
+      try {
+        await _handleMoneyCommand(moneyCmd);
+      } catch (e) {
+        if (mounted) _snack('تعذّر تنفيذ الأمر: $e');
+      } finally {
+        await context.read<ChatProvider>().refreshMessages(widget.groupId);
+        _lastSubmittedText = null;
+        _lastSubmittedAt = null;
+        if (mounted) setState(() => _isSending = false);
+        _scrollToBottom();
+      }
       return;
     }
 
@@ -583,8 +588,27 @@ class _ChatScreenState extends State<ChatScreen> {
     Future<void> done(String? errOrNull, String successMsg,
         {List<String> targets = const []}) async {
       await budget.refreshData(widget.groupId);
-      // Notify both parties (admin + the affected member) of the money action.
       if (errOrNull == null && successMsg.isNotEmpty) {
+        // The affected member (if any) — so they see it in their own chat.
+        String? chatTarget;
+        for (final id in targets) {
+          if (id != user.id) {
+            chatTarget = id;
+            break;
+          }
+        }
+        // Post the action to the chat feed so there's a visible record.
+        await _db.sendMessage(ChatMessage(
+          id: 'mc_${DateTime.now().microsecondsSinceEpoch}',
+          groupId: widget.groupId,
+          senderId: user.id,
+          senderName: user.name,
+          type: MessageType.system,
+          content: '💸 $successMsg',
+          timestamp: DateTime.now(),
+          targetUserId: chatTarget,
+        ));
+        // Notify both parties (admin + the affected member).
         await _db.addFamilyNotification(FamilyNotificationModel(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           groupId: widget.groupId,
@@ -660,7 +684,18 @@ class _ChatScreenState extends State<ChatScreen> {
           amount: amount,
           byName: user.name,
           byPhone: user.phone);
-      await done(err, 'تم التحويل بنجاح');
+      // Notify any member whose wallet was touched (plus the admin actor).
+      final involved = <String>[user.id];
+      if (fromW.isMemberWallet && (fromW.ownerId ?? '').isNotEmpty) {
+        involved.add(fromW.ownerId!);
+      }
+      if (toW.isMemberWallet && (toW.ownerId ?? '').isNotEmpty) {
+        involved.add(toW.ownerId!);
+      }
+      await done(
+          err,
+          'تم تحويل ${amount.toStringAsFixed(0)} ج من ${fromW.name} إلى ${toW.name}',
+          targets: involved);
       return;
     }
 

@@ -28,6 +28,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   List<UserModel> _members = [];
   String? _memberFilterId; // admin: null = whole family, else a member
   Map<String, List<WalletEntryModel>> _ledger = {}; // walletId → its entries
+  bool _ledgersLoading = false;
 
   @override
   void initState() {
@@ -52,7 +53,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         map[w.id] = await _db.getWalletEntriesSync(widget.groupId, w.id);
       } catch (_) {}
     }
-    if (mounted) setState(() => _ledger = map);
+    if (mounted) {
+      setState(() {
+        _ledger = map;
+        _ledgersLoading = false;
+      });
+    }
   }
 
   /// Total funded (money in) for the scoped wallets within the period.
@@ -107,6 +113,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   @override
   Widget build(BuildContext context) {
     final budget = context.watch<BudgetProvider>();
+    // Load wallet ledgers once the wallets are actually available (the initial
+    // postFrame load can run before BudgetProvider has them).
+    if (_ledger.isEmpty && budget.wallets.isNotEmpty && !_ledgersLoading) {
+      _ledgersLoading = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadLedgers());
+    }
     final user = context.read<AuthProvider>().user;
     final isAdmin = user?.isAdmin == true;
 
@@ -417,18 +429,26 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // ─── By wallet (admin) ───
   Widget _byWalletSection(
       List<WalletModel> wallets, List<TransactionModel> txns) {
-    final spentByWallet = <String, double>{};
-    for (final t in txns.where((t) => t.isExpense && t.walletId != null)) {
-      spentByWallet[t.walletId!] = (spentByWallet[t.walletId!] ?? 0) + t.amount;
-    }
     final active =
         wallets.where((w) => !w.archived && !w.isWorkerWallet).toList();
     if (active.isEmpty) return _empty('لا توجد محافظ');
     return Column(
       children: active.map((w) {
-        final spent = spentByWallet[w.id] ?? 0;
-        final entries =
-            (_ledger[w.id] ?? const <WalletEntryModel>[]).reversed.toList();
+        final all = _ledger[w.id] ?? const <WalletEntryModel>[];
+        // Full in/out flow for this wallet within the selected period.
+        var inSum = 0.0;
+        var outSum = 0.0;
+        final scoped = <WalletEntryModel>[];
+        for (final e in all) {
+          if (!_inPeriod(e.at)) continue;
+          scoped.add(e);
+          if (e.isDebit) {
+            inSum += e.amount;
+          } else {
+            outSum += e.amount;
+          }
+        }
+        final entries = scoped.reversed.toList();
         return Card(
           margin: const EdgeInsets.only(bottom: 6),
           child: ExpansionTile(
@@ -440,14 +460,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     : Icons.account_balance_wallet_rounded,
                 color: AppTheme.accentTeal),
             title: Text(w.name),
-            subtitle: Text(
-                '${w.isMemberWallet ? 'محفظة عضو' : 'مصدر نقدي'} • صرف ${_money.format(spent)} • رصيد ${_money.format(w.balance)} ج'),
+            subtitle: Text.rich(TextSpan(children: [
+              TextSpan(
+                  text: w.isMemberWallet ? 'محفظة عضو  ' : 'مصدر نقدي  '),
+              TextSpan(
+                  text: 'وارد ${_money.format(inSum)}  ',
+                  style: const TextStyle(color: AppTheme.incomeGreen)),
+              TextSpan(
+                  text: 'منصرف ${_money.format(outSum)}  ',
+                  style: const TextStyle(color: AppTheme.expenseRed)),
+              TextSpan(
+                  text: 'رصيد ${_money.format(w.balance)} ج',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            ])),
             childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
             children: entries.isEmpty
                 ? const [
                     Padding(
                       padding: EdgeInsets.all(10),
-                      child: Text('لا توجد حركات على هذه المحفظة.'),
+                      child: Text('لا توجد حركات في هذه الفترة.'),
                     )
                   ]
                 : [_walletLedger(entries)],
