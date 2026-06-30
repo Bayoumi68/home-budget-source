@@ -1,6 +1,6 @@
-# Home Budget — Documentation
+# Home Budgets — Documentation
 
-Home Budget is an Arabic-first, chat-driven family budgeting app built on Flutter + Firebase.
+Home Budgets is an Arabic-first, chat-driven family budgeting app built on Flutter + Firebase.
 Members log spending in everyday Arabic and the app turns each message into a categorized
 transaction, then rolls it up into shared budgets and analytics.
 

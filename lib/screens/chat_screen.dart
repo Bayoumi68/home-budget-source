@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +14,7 @@ import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/budget_provider.dart';
 import '../providers/notification_provider.dart';
+import '../providers/avatar_provider.dart';
 import '../models/chat_message_model.dart';
 import '../models/wallet_model.dart';
 import '../models/user_model.dart';
@@ -31,6 +32,8 @@ import 'group_settings_screen.dart';
 import 'analytics_screen.dart';
 import 'notifications_screen.dart';
 import 'teams_screen.dart';
+import 'wallets_overview_screen.dart';
+import 'expenses_overview_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String groupId;
@@ -69,6 +72,9 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _lastSubmittedText;
   DateTime? _lastSubmittedAt;
   String? _lastParsedPreview;
+  // In-app update notice: set when a newer build exists than the one running.
+  String? _updateVersion;
+  bool _updateDismissed = false;
   // WhatsApp-style reply: the message the next send will quote (null = none).
   ChatMessage? _replyTo;
 
@@ -79,6 +85,10 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       context.read<ChatProvider>().subscribeMessages(widget.groupId);
       final auth = context.read<AuthProvider>();
+      unawaited(context.read<AvatarProvider>().load(widget.groupId));
+      _db.checkForUpdate().then((v) {
+        if (mounted && v != null) setState(() => _updateVersion = v);
+      });
       final userId = auth.user?.id;
       if (userId != null) {
         final notifications = context.read<NotificationProvider>();
@@ -1045,6 +1055,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _openAccountDialog() async {
     final auth = context.read<AuthProvider>();
+    final avatars = context.read<AvatarProvider>();
     final user = auth.user;
     if (user == null) return;
     await showModalBottomSheet(
@@ -1055,7 +1066,10 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _UserAvatar(name: user.name, photoPath: user.photoUrl, radius: 42),
+            _UserAvatar(
+                name: user.name,
+                photoBytes: avatars.bytesFor(user.id),
+                radius: 42),
             const SizedBox(height: 12),
             Text(user.name,
                 style:
@@ -1070,7 +1084,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   maxWidth: 800,
                 );
                 if (picked == null) return;
-                await auth.updateProfilePhoto(picked.path);
+                final bytes = await picked.readAsBytes();
+                await avatars.setAvatar(widget.groupId, user.id, bytes);
                 if (ctx.mounted) Navigator.pop(ctx);
                 if (mounted) setState(() {});
               },
@@ -1079,7 +1094,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'حاليًا الصورة محفوظة على هذا الجهاز فقط. في نسخة Firebase ستظهر على كل أجهزة العائلة.',
+              'الصورة تظهر لكل أفراد العائلة على الرسائل وكروت الأعضاء.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
@@ -1148,6 +1163,78 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// Web: reload the current tab (the no-cache hosting serves the new build).
+  /// Native: open the APK download page so the user installs the update.
+  Future<void> _doUpdate() async {
+    final uri = Uri.parse(
+        kIsWeb ? AppConstants.appWebLink : AppConstants.androidDownloadLink);
+    try {
+      if (kIsWeb) {
+        await launchUrl(uri, webOnlyWindowName: '_self');
+      } else {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر فتح رابط التحديث.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _onMenuSelected(String value) async {
+    switch (value) {
+      case 'invite':
+        await _shareAppInvite();
+        break;
+      case 'teams':
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => TeamsScreen(groupId: widget.groupId)),
+        );
+        break;
+      case 'settings':
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => GroupSettingsScreen(groupId: widget.groupId)),
+        );
+        break;
+      case 'switch':
+        final authProvider = context.read<AuthProvider>();
+        final navigator = Navigator.of(context);
+        await authProvider.switchAccount();
+        if (!mounted) return;
+        navigator.pushNamedAndRemoveUntil('/auth', (_) => false);
+        break;
+      case 'logout':
+        final authProvider = context.read<AuthProvider>();
+        final navigator = Navigator.of(context);
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('تسجيل الخروج'),
+            content: const Text('هل تريد الخروج من حسابك على هذا الجهاز؟'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('إلغاء')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('خروج')),
+            ],
+          ),
+        );
+        if (ok != true) return;
+        await authProvider.signOut();
+        if (!mounted) return;
+        navigator.pushNamedAndRemoveUntil('/auth', (_) => false);
+        break;
+    }
+  }
+
   Future<void> _shareAppInvite() async {
     final choice = await showModalBottomSheet<String>(
       context: context,
@@ -1159,7 +1246,7 @@ class _ChatScreenState extends State<ChatScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const ListTile(
-                title: Text('مشاركة Home Budget'),
+                title: Text('مشاركة Home Budgets'),
                 subtitle: Text('اختار نوع الرسالة قبل فتح واتساب.'),
               ),
               ListTile(
@@ -1193,7 +1280,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     final installUrl =
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'دعوة للانضمام إلى عائلتنا على Home Budget\n\n'
+    final message = 'دعوة للانضمام إلى عائلتنا على Home Budgets\n\n'
         'افتح الرابط التالي وادخل اسمك للانضمام:\n$installUrl\n\n'
         'هذا الرابط للاستخدام مرة واحدة فقط (كود: $code).\n'
         'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n\n'
@@ -1215,7 +1302,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _shareNewFamilyTrial() async {
     final installUrl =
         '${AppConstants.appWebLink}/install.html?mode=newFamily&reset=1&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'جرّب Home Budget وأنشئ عائلتك أنت\n\n'
+    final message = 'جرّب Home Budgets وأنشئ عائلتك أنت\n\n'
         'افتح الرابط التالي:\n$installUrl\n\n'
         'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
         'APK اختياري لأندرويد فقط لو تريد تطبيق مثبت أو صوت أفضل.\n\n'
@@ -1392,6 +1479,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final chat = context.watch<ChatProvider>();
     final budget = context.watch<BudgetProvider>();
     final notifications = context.watch<NotificationProvider>();
+    final avatars = context.watch<AvatarProvider>();
     final user = auth.user;
     // Admin sees the family total; a member sees only their own wallet.
     final isMemberView = user != null && !user.isAdmin;
@@ -1427,7 +1515,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onTap: _openAccountDialog,
             child: _UserAvatar(
                 name: user?.name ?? widget.groupName,
-                photoPath: user?.photoUrl,
+                photoBytes: avatars.bytesFor(user?.id),
                 radius: 20),
           ),
         ),
@@ -1468,26 +1556,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         actions: [
-          IconButton(
-            tooltip: 'دعوة فرد / مشاركة التطبيق',
-            icon: const Icon(Icons.person_add_alt_1_rounded),
-            onPressed: _shareAppInvite,
-          ),
-          IconButton(
-            tooltip: 'التقارير',
-            icon: const Icon(Icons.analytics_rounded),
-            onPressed: user?.canViewReports == true
-                ? () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) =>
-                              AnalyticsScreen(groupId: widget.groupId)),
-                    )
-                : () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('التقارير غير مفعلة لحسابك')),
-                    ),
-          ),
           IconButton(
             tooltip: 'إشعارات العائلة',
             icon: Stack(
@@ -1530,70 +1598,102 @@ class _ChatScreenState extends State<ChatScreen> {
                   builder: (_) => MembersScreen(groupId: widget.groupId)),
             ),
           ),
-          if (user?.isAdmin == true)
-            IconButton(
-              tooltip: 'الفرق',
-              icon: const Icon(Icons.groups_2_rounded),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => TeamsScreen(groupId: widget.groupId)),
-              ),
-            ),
-          if (user?.isAdmin == true)
-            IconButton(
-              tooltip: 'الإعدادات',
-              icon: const Icon(Icons.settings_rounded),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) =>
-                        GroupSettingsScreen(groupId: widget.groupId)),
-              ),
-            ),
           IconButton(
-            tooltip: 'تبديل العائلة/الحساب',
-            icon: const Icon(Icons.swap_horiz_rounded),
-            onPressed: () async {
-              final authProvider = context.read<AuthProvider>();
-              final navigator = Navigator.of(context);
-              await authProvider.switchAccount();
-              if (!mounted) return;
-              navigator.pushNamedAndRemoveUntil('/auth', (_) => false);
-            },
+            tooltip: 'التقارير',
+            icon: const Icon(Icons.analytics_rounded),
+            onPressed: user?.canViewReports == true
+                ? () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              AnalyticsScreen(groupId: widget.groupId)),
+                    )
+                : () => ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('التقارير غير مفعلة لحسابك')),
+                    ),
           ),
-          IconButton(
-            tooltip: 'تسجيل الخروج',
-            icon: const Icon(Icons.logout_rounded),
-            onPressed: () async {
-              final authProvider = context.read<AuthProvider>();
-              final navigator = Navigator.of(context);
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('تسجيل الخروج'),
-                  content:
-                      const Text('هل تريد الخروج من حسابك على هذا الجهاز؟'),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('إلغاء')),
-                    FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('خروج')),
-                  ],
+          PopupMenuButton<String>(
+            tooltip: 'المزيد',
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: (value) => _onMenuSelected(value),
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'invite',
+                child: _MenuRow(
+                    icon: Icons.person_add_alt_1_rounded,
+                    label: 'دعوة / مشاركة'),
+              ),
+              if (user?.isAdmin == true)
+                const PopupMenuItem(
+                  value: 'teams',
+                  child: _MenuRow(icon: Icons.groups_2_rounded, label: 'الفرق'),
                 ),
-              );
-              if (ok != true) return;
-              await authProvider.signOut();
-              if (!mounted) return;
-              navigator.pushNamedAndRemoveUntil('/auth', (_) => false);
-            },
+              if (user?.isAdmin == true)
+                const PopupMenuItem(
+                  value: 'settings',
+                  child: _MenuRow(
+                      icon: Icons.settings_rounded, label: 'الإعدادات'),
+                ),
+              const PopupMenuItem(
+                value: 'switch',
+                child: _MenuRow(
+                    icon: Icons.swap_horiz_rounded, label: 'تبديل الحساب'),
+              ),
+              const PopupMenuItem(
+                value: 'logout',
+                child: _MenuRow(
+                    icon: Icons.logout_rounded, label: 'تسجيل الخروج'),
+              ),
+            ],
           ),
         ],
       ),
       body: Column(
         children: [
+          if (_updateVersion != null && !_updateDismissed)
+            Material(
+              color: AppTheme.gold,
+              child: InkWell(
+                onTap: _doUpdate,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.system_update_rounded,
+                          color: Colors.white, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'نسخة جديدة متاحة ($_updateVersion). اضغط للتحديث.',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _doUpdate,
+                        style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            visualDensity: VisualDensity.compact),
+                        child: const Text('تحديث',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                      InkWell(
+                        onTap: () => setState(() => _updateDismissed = true),
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.close_rounded,
+                              color: Colors.white, size: 18),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: AppTheme.primaryDark,
@@ -1601,13 +1701,29 @@ class _ChatScreenState extends State<ChatScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _SummaryItem(
-                    label: isMemberView ? 'مصروفاتي' : 'مصروفات العائلة',
-                    amount: visibleExpenses,
-                    color: AppTheme.expenseRed),
+                  label: isMemberView ? 'مصروفاتي' : 'مصروفات العائلة',
+                  amount: visibleExpenses,
+                  color: AppTheme.expenseRed,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          ExpensesOverviewScreen(groupId: widget.groupId),
+                    ),
+                  ),
+                ),
                 _SummaryItem(
-                    label: isMemberView ? 'رصيدي' : 'رصيد المحافظ',
-                    amount: visibleBalance,
-                    color: AppTheme.incomeGreen),
+                  label: isMemberView ? 'رصيدي' : 'رصيد المحافظ',
+                  amount: visibleBalance,
+                  color: AppTheme.incomeGreen,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          WalletsOverviewScreen(groupId: widget.groupId),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1731,17 +1847,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
 class _UserAvatar extends StatelessWidget {
   final String name;
-  final String? photoPath;
+  final Uint8List? photoBytes;
   final double radius;
 
-  const _UserAvatar({required this.name, this.photoPath, required this.radius});
+  const _UserAvatar({required this.name, this.photoBytes, required this.radius});
 
   @override
   Widget build(BuildContext context) {
-    final hasPhoto = photoPath != null && photoPath!.isNotEmpty;
-    if (hasPhoto && kIsWeb) {
-      return CircleAvatar(
-          radius: radius, backgroundImage: NetworkImage(photoPath!));
+    final bytes = photoBytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return CircleAvatar(radius: radius, backgroundImage: MemoryImage(bytes));
     }
     return CircleAvatar(
       radius: radius,
@@ -1751,6 +1866,23 @@ class _UserAvatar extends StatelessWidget {
         style:
             const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
       ),
+    );
+  }
+}
+
+class _MenuRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _MenuRow({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: AppTheme.primaryGreen),
+        const SizedBox(width: 12),
+        Text(label),
+      ],
     );
   }
 }
@@ -1793,19 +1925,32 @@ class _SummaryItem extends StatelessWidget {
   final String label;
   final double amount;
   final Color color;
+  final VoidCallback? onTap;
 
   const _SummaryItem({
     required this.label,
     required this.amount,
     required this.color,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(label,
-            style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label,
+                style: const TextStyle(color: Colors.white54, fontSize: 12)),
+            if (onTap != null) ...[
+              const SizedBox(width: 3),
+              const Icon(Icons.unfold_more_rounded,
+                  size: 13, color: Colors.white38),
+            ],
+          ],
+        ),
         const SizedBox(height: 2),
         Text(
           '${NumberFormat('#,###').format(amount)} ج',
@@ -1813,6 +1958,15 @@ class _SummaryItem extends StatelessWidget {
               color: color, fontWeight: FontWeight.bold, fontSize: 15),
         ),
       ],
+    );
+    if (onTap == null) return content;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        child: content,
+      ),
     );
   }
 }

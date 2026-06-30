@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../config/constants.dart';
 import '../models/chat_message_model.dart';
+import '../providers/avatar_provider.dart';
 
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
@@ -21,7 +23,7 @@ class ChatBubble extends StatelessWidget {
     if (message.type == MessageType.system) {
       return _systemBubble();
     }
-    return _userBubble();
+    return _userBubble(context);
   }
 
   Widget _systemBubble() {
@@ -51,7 +53,7 @@ class ChatBubble extends StatelessWidget {
     );
   }
 
-  Widget _userBubble() {
+  Widget _userBubble(BuildContext context) {
     final isExpense = message.type == MessageType.expense;
     final isDeleted = message.isDeleted;
     final isIncome = isExpense && message.content.startsWith('دخل');
@@ -72,13 +74,20 @@ class ChatBubble extends StatelessWidget {
           if (!isMe)
             Padding(
               padding: const EdgeInsets.only(left: 12, bottom: 2),
-              child: Text(
-                message.senderName,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: _nameColor(message.senderName),
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _miniAvatar(context),
+                  const SizedBox(width: 6),
+                  Text(
+                    message.senderName,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: _nameColor(message.senderName),
+                    ),
+                  ),
+                ],
               ),
             ),
           GestureDetector(
@@ -223,6 +232,21 @@ class ChatBubble extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _miniAvatar(BuildContext context) {
+    final bytes = context.watch<AvatarProvider>().bytesFor(message.senderId);
+    if (bytes != null && bytes.isNotEmpty) {
+      return CircleAvatar(radius: 11, backgroundImage: MemoryImage(bytes));
+    }
+    return CircleAvatar(
+      radius: 11,
+      backgroundColor: _nameColor(message.senderName),
+      child: Text(
+        message.senderName.isEmpty ? '?' : message.senderName[0].toUpperCase(),
+        style: const TextStyle(fontSize: 11, color: Colors.white),
       ),
     );
   }

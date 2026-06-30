@@ -1,6 +1,6 @@
 # Firebase Setup — point the app at YOUR own project
 
-This is the anchor reference for wiring Home Budget to a fresh Firebase project. Everything here
+This is the anchor reference for wiring Home Budgets to a fresh Firebase project. Everything here
 is project-specific; replace it and the app runs entirely on your own backend (no other server).
 
 ## 1. What is project-specific (the values to replace)
@@ -8,7 +8,7 @@ is project-specific; replace it and the app runs entirely on your own backend (n
 | File | Holds | How to set it |
 |------|-------|---------------|
 | `.firebaserc` | default project id (`budget-home-bayoumi`) | `firebase use --add` or edit it to your project id |
-| `firebase.json` → `hosting[].site` | Hosting site IDs (`budget-home-bayoumi`, `home-budgets`) | your Hosting site ID(s); drop to one entry if you want one site |
+| `firebase.json` → `hosting[].site` | Hosting site ID (`home-budgets`) | your Hosting site ID; add more array entries only if you want multiple URLs |
 | `firebase.json` → `flutter.platforms` | projectId + appIds | rewritten by `flutterfire configure` |
 | `lib/firebase_options.dart` | apiKey, appId, projectId, **authDomain**, storageBucket, messagingSenderId, measurementId | **regenerate** with `flutterfire configure` (don't hand-edit) |
 | `android/app/google-services.json` | Android Firebase config | written by `flutterfire configure` / downloaded from console — **gitignored**, never committed |

@@ -9,6 +9,7 @@ import 'providers/auth_provider.dart';
 import 'providers/chat_provider.dart';
 import 'providers/budget_provider.dart';
 import 'providers/notification_provider.dart';
+import 'providers/avatar_provider.dart';
 
 import 'providers/theme_provider.dart';
 import 'screens/splash_screen.dart';
@@ -66,7 +67,7 @@ class AppStartupError extends StatelessWidget {
                         size: 54, color: Colors.red),
                     const SizedBox(height: 16),
                     const Text(
-                      'حدثت مشكلة في فتح Home Budget',
+                      'حدثت مشكلة في فتح Home Budgets',
                       textAlign: TextAlign.center,
                       style:
                           TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
@@ -104,12 +105,13 @@ class BudgetHomeApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ChatProvider()),
         ChangeNotifierProvider(create: (_) => BudgetProvider()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
+        ChangeNotifierProvider(create: (_) => AvatarProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
       ],
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, _) {
           return MaterialApp(
-            title: 'Home Budget',
+            title: 'Home Budgets',
             debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme,
             darkTheme: AppTheme.darkTheme,

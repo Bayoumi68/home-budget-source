@@ -8,6 +8,7 @@ import '../config/theme.dart';
 import '../config/constants.dart';
 import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
+import '../providers/avatar_provider.dart';
 import '../services/database_service.dart';
 import '../services/auth_service.dart';
 import 'member_detail_screen.dart';
@@ -29,6 +30,9 @@ class _MembersScreenState extends State<MembersScreen> {
   void initState() {
     super.initState();
     _loadMembers();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<AvatarProvider>().load(widget.groupId);
+    });
   }
 
   Future<void> _loadMembers() async {
@@ -40,6 +44,7 @@ class _MembersScreenState extends State<MembersScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    final avatars = context.watch<AvatarProvider>();
     final canManage =
         auth.user?.isAdmin == true || auth.user?.canManageMembers == true;
 
@@ -79,18 +84,26 @@ class _MembersScreenState extends State<MembersScreen> {
                               _loadMembers();
                             }
                           : null,
-                      leading: CircleAvatar(
-                        backgroundColor: member.isAdmin
-                            ? AppTheme.gold
-                            : AppTheme.primaryLight,
-                        child: Text(
-                          member.name.isEmpty
-                              ? '?'
-                              : member.name[0].toUpperCase(),
-                          style: const TextStyle(
-                              color: Colors.white, fontWeight: FontWeight.bold),
-                        ),
-                      ),
+                      leading: () {
+                        final bytes = avatars.bytesFor(member.id);
+                        if (bytes != null && bytes.isNotEmpty) {
+                          return CircleAvatar(
+                              backgroundImage: MemoryImage(bytes));
+                        }
+                        return CircleAvatar(
+                          backgroundColor: member.isAdmin
+                              ? AppTheme.gold
+                              : AppTheme.primaryLight,
+                          child: Text(
+                            member.name.isEmpty
+                                ? '?'
+                                : member.name[0].toUpperCase(),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold),
+                          ),
+                        );
+                      }(),
                       title: Row(
                         children: [
                           Expanded(
@@ -217,7 +230,7 @@ class _MembersScreenState extends State<MembersScreen> {
     final inviteLanding =
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=${widget.groupId}&phone=$memberPhone&v=${Uri.encodeComponent(AppConstants.appVersion)}';
     final message = 'مرحبًا ${member.name},\n'
-        'تمت دعوتك للانضمام إلى عائلة ${group?.name ?? ''} على Home Budget.\n\n'
+        'تمت دعوتك للانضمام إلى عائلة ${group?.name ?? ''} على Home Budgets.\n\n'
         'افتح رابط الدعوة وادخل اسمك للانضمام:\n$inviteLanding\n\n'
         'هذا الرابط للاستخدام مرة واحدة فقط (كود: $code).\n'
         'اكتب رقم موبايلك (${member.phone ?? ''}) ليتم ربطك بصلاحياتك المحددة.\n\n'

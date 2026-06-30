@@ -1,6 +1,6 @@
-# Home Budget — Overview
+# Home Budgets — Overview
 
-Home Budget is an Arabic-first, chat-driven budgeting app for families. Members log
+Home Budgets is an Arabic-first, chat-driven budgeting app for families. Members log
 spending in everyday Arabic — typed or spoken — and the app turns each message into a
 categorized transaction, then rolls spending up into budgets and analytics.
 
@@ -31,7 +31,7 @@ Arabic language, currency EGP, up to 10 members per family.
 
 ## Distribution
 
-- Web app: https://home-budgets.web.app (primary) — also https://budget-home-bayoumi.web.app.
+- Web app: https://home-budgets.web.app (the single unified domain).
   Note: web Google sign-in works on desktop Chrome / Samsung Browser but not Chrome-on-Android
   — on phones use the APK. See [Authentication & Family Model](auth-and-family-model.md).
 - Android APK: stable link via GitHub Releases (see [Development & Deployment](dev-and-deploy.md)).

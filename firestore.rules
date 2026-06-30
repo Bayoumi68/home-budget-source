@@ -43,6 +43,15 @@ service cloud.firestore {
       allow read: if request.auth != null;
     }
 
+    // App version pointer for the in-app update notice. Any signed-in client can
+    // read it; a client may publish its own (newer) build. Shape-validated.
+    match /appConfig/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.data.build is int
+        && request.resource.data.version is string;
+    }
+
     // Beta-safe diagnostics: clients can write small events, but nobody can read
     // all diagnostic data from the client.
     match /diagnostics/{docId} {
@@ -176,6 +185,14 @@ service cloud.firestore {
         allow create, update: if validGroupId(groupId)
           && hasGroupField(groupId)
           && request.resource.data.id == notificationId;
+        allow delete: if validGroupId(groupId);
+      }
+
+      // Per-member profile photo (base64), shared with the whole family.
+      match /avatars/{memberId} {
+        allow read: if validGroupId(groupId);
+        allow create, update: if validGroupId(groupId)
+          && request.resource.data.data is string;
         allow delete: if validGroupId(groupId);
       }
     }

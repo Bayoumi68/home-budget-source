@@ -2,10 +2,10 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <title>فتح Home Budget</title>
+  <title>فتح Home Budgets</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="افتح Home Budget على الويب فورًا، أو حمّل APK اختياريًا على أندرويد.">
-  <meta property="og:title" content="فتح Home Budget">
+  <meta name="description" content="افتح Home Budgets على الويب فورًا، أو حمّل APK اختياريًا على أندرويد.">
+  <meta property="og:title" content="فتح Home Budgets">
   <meta property="og:description" content="الويب يعمل على أندرويد وآيفون بدون تثبيت، وAPK اختياري لأندرويد.">
   <meta property="og:type" content="website">
   <style>
@@ -17,7 +17,7 @@
 </head>
 <body>
   <div class="card">
-    <h1 id="title">Home Budget — فتح التطبيق</h1>
+    <h1 id="title">Home Budgets — فتح التطبيق</h1>
     <p class="note" id="desc">افتح نسخة الويب فورًا على أي موبايل. تحميل APK على أندرويد اختياري.</p>
     <a id="webBtn" class="btn web" href="/">فتح نسخة الويب الآن</a>
     <a id="androidBtn" class="btn download" href="/download.html" target="_blank" rel="noopener">اختياري: تحميل Android APK</a>
@@ -41,10 +41,10 @@
   webParams.set('web', '1');
   document.getElementById('webBtn').href = '/?' + webParams.toString();
   document.getElementById('title').textContent = hasInvite
-    ? (isTeamInvite ? 'Home Budget — دعوة فريق' : 'Home Budget — دعوة عائلية')
+    ? (isTeamInvite ? 'Home Budgets — دعوة فريق' : 'Home Budgets — دعوة عائلية')
     : newFamilyMode
-      ? 'Home Budget — تجربة وإنشاء عائلة جديدة'
-      : 'Home Budget — فتح التطبيق';
+      ? 'Home Budgets — تجربة وإنشاء عائلة جديدة'
+      : 'Home Budgets — فتح التطبيق';
   document.getElementById('desc').textContent = hasInvite
     ? (isTeamInvite
       ? 'هذه دعوة فريق. افتح الويب وادخل اسمك للانضمام؛ الكود مضمّن في الرابط. بعد الدخول ستجد الفريق في زر الفرق.'

@@ -400,15 +400,6 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> updateProfilePhoto(String photoPath) async {
-    if (_user == null || _group == null) return;
-    final updated = _user!.copyWith(photoUrl: photoPath);
-    _user = updated;
-    await _db.updateMemberPhoto(_group!.id, updated.id, photoPath);
-    await _db.saveActiveSession(updated, _group!);
-    notifyListeners();
-  }
-
   /// Edit your OWN display name (works for the admin too). Updates the member
   /// row and the live session.
   Future<void> updateMyName(String name) async {

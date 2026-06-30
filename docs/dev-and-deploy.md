@@ -2,12 +2,13 @@
 
 ## Firebase project
 
-`budget-home-bayoumi` (project number 229990261595, **unrenameable**). Two Hosting sites serve
-the same `build/web` (see the array in `firebase.json`):
-- **https://home-budgets.web.app** — the **primary** (invite/download links).
-- https://budget-home-bayoumi.web.app — the original, still live.
+`budget-home-bayoumi` (project number 229990261595, **unrenameable**). A **single** Hosting site
+serves `build/web` (see the array in `firebase.json`):
+- **https://home-budgets.web.app** — the one unified domain (web app + invite/download links).
 
-The clean names `budget-home`/`home-budget` are reserved by other projects. Web `authDomain` is
+(The project once also deployed to `budget-home-bayoumi.web.app`; that second site was dropped
+from `firebase.json` to keep one domain. The site still exists in the console but is no longer
+deployed to.) Web `authDomain` is
 the Firebase default **`budget-home-bayoumi.firebaseapp.com`** — Google handles it for sign-in
 across browsers (a custom `home-budgets.web.app` authDomain broke Chrome-on-Android; see the
 [auth doc](auth-and-family-model.md)). The OAuth web client must authorize the app origins
@@ -19,7 +20,7 @@ them up).
 
 ## Repositories
 
-- **Source (private):** https://github.com/Bayoumi68/home-budget-source — pushed via the
+- **Source (public):** https://github.com/Bayoumi68/home-budget-source — pushed via the
   remote `mine` (`git push mine main`); `origin` stays the upstream read-only clone source.
 - **APK hosting (public):** https://github.com/Bayoumi68/home-budget-apk — release tag `v2`,
   asset always named `home-budget.apk`, served from the **stable** URL

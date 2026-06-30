@@ -81,6 +81,8 @@ class DatabaseService {
       _families.doc(groupId).collection('teams');
   CollectionReference<Map<String, dynamic>> _learnedKeywords(String groupId) =>
       _families.doc(groupId).collection('learnedKeywords');
+  CollectionReference<Map<String, dynamic>> _avatars(String groupId) =>
+      _families.doc(groupId).collection('avatars');
 
   String _newInviteCode() {
     return List.generate(
@@ -156,6 +158,62 @@ class DatabaseService {
     await _prefs?.remove(_activeTeamKey);
     await _prefs?.remove(_activeSessionModeKey);
     await _prefs?.remove(_sessionVersionKey);
+  }
+
+  // ─── Profile avatars (shared with the whole family) ───
+  // Stored as base64 in families/{groupId}/avatars/{memberId} so a member's
+  // photo shows on every family member's device (chat bubbles, member cards,
+  // header). Kept in its own subcollection so it never bloats member-list reads.
+  Future<void> setAvatar(
+      String groupId, String memberId, String base64Data) async {
+    await _avatars(groupId).doc(memberId).set({
+      'data': base64Data,
+      'updatedAt': DateTime.now().toIso8601String(),
+    });
+  }
+
+  /// All avatars for the family: memberId → base64 string.
+  Future<Map<String, String>> getAvatars(String groupId) async {
+    final q = await _avatars(groupId).get();
+    final map = <String, String>{};
+    for (final d in q.docs) {
+      final data = (d.data()['data'] ?? '').toString();
+      if (data.isNotEmpty) map[d.id] = data;
+    }
+    return map;
+  }
+
+  Future<void> removeAvatar(String groupId, String memberId) async {
+    await _avatars(groupId).doc(memberId).delete();
+  }
+
+  // ─── In-app update notice ───
+  // A single shared pointer (appConfig/latest) records the newest build anyone
+  // in the family has run. On launch each device compares its own build:
+  //   • newer than (or no) recorded → self-publish this build as the latest,
+  //   • older → an update is available (returns the latest version string).
+  // This needs no manual deploy step: the first device on a new build (e.g. the
+  // freshly-deployed web app) publishes it, and everyone else is then prompted.
+  Future<String?> checkForUpdate() async {
+    try {
+      final ref = _fs.collection('appConfig').doc('latest');
+      final snap = await ref.get();
+      final data = snap.data();
+      final latestBuild = (data?['build'] as num?)?.toInt() ?? 0;
+      if (AppConstants.appBuild >= latestBuild) {
+        if (AppConstants.appBuild > latestBuild) {
+          await ref.set({
+            'version': AppConstants.appVersion,
+            'build': AppConstants.appBuild,
+            'updatedAt': DateTime.now().toIso8601String(),
+          });
+        }
+        return null; // we are the latest
+      }
+      return (data?['version'] ?? 'نسخة جديدة').toString();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> writeDiagnostic(String event,
@@ -1853,6 +1911,76 @@ class DatabaseService {
 
   Future<void> clearNotifications(String groupId) async {
     await _deleteQuerySnapshot(await _notifications(groupId).limit(500).get());
+  }
+
+  // ─── Admin factory reset ───
+  /// Hard-reset every money account in the family back to zero while KEEPING
+  /// the people (members + teams) and the structure (wallets, categories,
+  /// budget limits). It:
+  ///   • deletes all transactions (expenses/income),
+  ///   • empties every wallet's ledger and sets its balance to 0 (the wallet
+  ///     doc itself stays, so each member keeps their wallet),
+  ///   • zeroes every budget's `spent` (limits are kept) and every member's
+  ///     `currentSpending`,
+  ///   • clears the chat feed and notifications (they are full of now-orphaned
+  ///     money/expense entries).
+  /// Members, teams, wallets, categories and budget limits are preserved.
+  /// This is irreversible — callers must confirm with the admin first.
+  Future<void> factoryResetFamily(String groupId) async {
+    final nowIso = DateTime.now().toIso8601String();
+
+    // 1) All transactions.
+    await _wipeCollection(_transactions(groupId));
+
+    // 2) Every wallet: empty its ledger, zero its balance, keep the wallet.
+    final walletsSnap = await _wallets(groupId).get();
+    for (final w in walletsSnap.docs) {
+      await _wipeCollection(_walletEntries(groupId, w.id));
+      await w.reference.set({
+        'balance': 0,
+        'ledgerStarted': false,
+        'updatedAt': nowIso,
+      }, SetOptions(merge: true));
+    }
+
+    // 3) Zero budgets' spent (keep limits) and members' currentSpending.
+    final budgetsSnap = await _budgets(groupId).get();
+    if (budgetsSnap.docs.isNotEmpty) {
+      final batch = _fs.batch();
+      for (final b in budgetsSnap.docs) {
+        batch.set(b.reference, {'spent': 0, 'updatedAt': nowIso},
+            SetOptions(merge: true));
+      }
+      await batch.commit();
+    }
+    final membersSnap = await _members(groupId).get();
+    if (membersSnap.docs.isNotEmpty) {
+      final batch = _fs.batch();
+      for (final m in membersSnap.docs) {
+        batch.set(m.reference, {'currentSpending': 0}, SetOptions(merge: true));
+      }
+      await batch.commit();
+    }
+
+    // 4) Clear the chat feed + notifications (now-orphaned money entries).
+    await _wipeCollection(_messages(groupId));
+    await _wipeCollection(_notifications(groupId));
+  }
+
+  /// Delete every document in a (sub)collection in batches — Firestore caps a
+  /// single batch at 500 writes, so we page until the collection is empty.
+  Future<void> _wipeCollection(
+      CollectionReference<Map<String, dynamic>> ref) async {
+    while (true) {
+      final snap = await ref.limit(400).get();
+      if (snap.docs.isEmpty) break;
+      final batch = _fs.batch();
+      for (final doc in snap.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+      if (snap.docs.length < 400) break;
+    }
   }
 
   // ─── Accounting Engine ───

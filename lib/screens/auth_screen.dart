@@ -298,7 +298,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       size: 46, color: AppTheme.primaryGreen),
                 ),
                 const SizedBox(height: 18),
-                const Text('Home Budget',
+                const Text('Home Budgets',
                     style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.bold,

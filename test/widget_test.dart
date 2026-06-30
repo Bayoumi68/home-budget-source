@@ -3,10 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:budget_home/main.dart';
 
 void main() {
-  testWidgets('Home Budget app starts on splash screen',
+  testWidgets('Home Budgets app starts on splash screen',
       (WidgetTester tester) async {
     await tester.pumpWidget(const BudgetHomeApp());
 
-    expect(find.text('Home Budget'), findsOneWidget);
+    expect(find.text('Home Budgets'), findsOneWidget);
   });
 }

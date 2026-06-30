@@ -7,7 +7,7 @@
         android:enableOnBackInvokedCallback="true"
         android:allowBackup="false"
         android:fullBackupContent="false"
-        android:label="Home Budget"
+        android:label="Home Budgets"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 

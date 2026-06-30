@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -590,7 +591,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     if (!mounted) return;
     final inviteLanding =
         '${AppConstants.appWebLink}/install.html?invite=$code&groupId=$groupId&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'دعوة للانضمام إلى عائلتنا على Home Budget\n\n'
+    final message = 'دعوة للانضمام إلى عائلتنا على Home Budgets\n\n'
         'افتح الرابط التالي وادخل اسمك للانضمام:\n$inviteLanding\n\n'
         'هذا الرابط للاستخدام مرة واحدة فقط (كود: $code).\n'
         'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n\n'
@@ -605,6 +606,42 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             content: Text('تم نسخ الدعوة. افتح واتساب والصقها لأي فرد.')),
       );
     }
+  }
+
+  Future<void> _checkForUpdate() async {
+    final v = await _db.checkForUpdate();
+    if (!mounted) return;
+    if (v == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أنت على أحدث نسخة ✓')),
+      );
+      return;
+    }
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تحديث متاح'),
+        content: Text('النسخة الجديدة: $v\nهل تريد التحديث الآن؟'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('لاحقًا')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('تحديث')),
+        ],
+      ),
+    );
+    if (go != true) return;
+    final uri = Uri.parse(
+        kIsWeb ? AppConstants.appWebLink : AppConstants.androidDownloadLink);
+    try {
+      if (kIsWeb) {
+        await launchUrl(uri, webOnlyWindowName: '_self');
+      } else {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {}
   }
 
   Future<void> _resetThisDevice() async {
@@ -631,10 +668,119 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
     }
   }
 
+  /// ADMIN tool: hard-reset the whole family's money back to zero. Requires the
+  /// admin to retype the family name, then wipes expenses + wallet balances +
+  /// the chat feed while keeping members, teams, wallets and category limits.
+  Future<void> _factoryResetFamily() async {
+    final groupName = (context.read<AuthProvider>().group?.name ?? '').trim();
+    final confirmController = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) {
+          final matches = groupName.isNotEmpty &&
+              confirmController.text.trim() == groupName;
+          return AlertDialog(
+            title: const Text('⚠️ إعادة ضبط المصنع'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'سيتم تصفير كل الحسابات نهائيًا ولا يمكن التراجع:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '• حذف كل المصاريف والحركات.\n'
+                    '• تصفير رصيد كل المحافظ ومسح كشوف حركتها.\n'
+                    '• مسح سجل الشات والإشعارات.',
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'يتم الاحتفاظ بـ: الأعضاء، الفرق، المحافظ، وأنواع المصاريف وحدودها.',
+                    style: TextStyle(
+                        color: AppTheme.incomeGreen,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('للتأكيد اكتب اسم العائلة: $groupName'),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: confirmController,
+                    textDirection: ui.TextDirection.rtl,
+                    autofocus: true,
+                    onChanged: (_) => setDialog(() {}),
+                    decoration: const InputDecoration(
+                      hintText: 'اسم العائلة',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('إلغاء')),
+              FilledButton(
+                onPressed: matches ? () => Navigator.pop(ctx, true) : null,
+                style:
+                    FilledButton.styleFrom(backgroundColor: AppTheme.expenseRed),
+                child: const Text('تصفير نهائي'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    confirmController.dispose();
+    if (ok != true || !mounted) return;
+
+    // Blocking progress while we wipe (the reset touches many documents).
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Expanded(child: Text('جاري تصفير الحسابات...')),
+          ],
+        ),
+      ),
+    );
+    final budgetProvider = context.read<BudgetProvider>();
+    String? error;
+    try {
+      await _db.factoryResetFamily(widget.groupId);
+      // Make sure every member still has their (now-empty) wallet.
+      await _db.provisionMemberWallets(widget.groupId);
+    } catch (e) {
+      error = e.toString();
+    }
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // close progress
+    if (error == null) {
+      _entryFutures.clear();
+      _expandedWallets.clear();
+      await budgetProvider.refreshData(widget.groupId);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(error == null
+          ? 'تمت إعادة ضبط المصنع — كل الحسابات أصبحت صفر.'
+          : 'تعذّر التصفير: $error'),
+    ));
+  }
+
   Future<void> _shareAppTrialLink() async {
     final trialUrl =
         '${AppConstants.appWebLink}/install.html?mode=newFamily&reset=1&v=${Uri.encodeComponent(AppConstants.appVersion)}';
-    final message = 'جرّب Home Budget وأنشئ عائلتك أنت\n\n'
+    final message = 'جرّب Home Budgets وأنشئ عائلتك أنت\n\n'
         'افتح الرابط التالي:\n$trialUrl\n\n'
         'افتح نسخة الويب مباشرة على أندرويد أو آيفون بدون تثبيت.\n'
         'APK اختياري لأندرويد فقط لو تريد تطبيق مثبت أو صوت أفضل.\n\n'
@@ -699,6 +845,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
               title: const Text('نسخة Firebase النشطة'),
               subtitle:
                   Text('${AppConstants.appVersion}\nGroup: ${widget.groupId}'),
+              trailing: const Icon(Icons.system_update_rounded),
+              onTap: _checkForUpdate,
             ),
           ),
           const SizedBox(height: 12),
@@ -858,6 +1006,21 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
               ),
             ),
           ),
+          if (auth.user?.isAdmin == true) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: budget.loading ? null : _factoryResetFamily,
+                icon: const Icon(Icons.delete_forever_rounded),
+                label: const Text('إعادة ضبط المصنع — تصفير كل الحسابات'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.expenseRed,
+                  side: const BorderSide(color: AppTheme.expenseRed),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -879,7 +1042,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           ),
           const SizedBox(height: 16),
           const Center(
-            child: Text('Home Budget v${AppConstants.appVersion}',
+            child: Text('Home Budgets v${AppConstants.appVersion}',
                 style: TextStyle(color: Colors.grey, fontSize: 12)),
           ),
         ],
