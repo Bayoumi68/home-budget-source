@@ -21,13 +21,19 @@ while the admin funds, withdraws, messages members, and monitors everyone. See
 A member writes "دفعت ٢٥٠ سوبر ماركت" → an offline parser extracts the amount and category →
 a transaction is stored under the family → budgets and analytics update.
 
+The chat is **intent-first** — the verb decides the action, not the number. Beyond expenses,
+the admin types or speaks commands like «أضف ٢٠٠ لمحمد» (fund), «اسحب ١٠٠ من أحمد» (withdraw),
+«حوّل ٥٠٠ من الكاش إلى البنك» (transfer), «رفع حد محمد ٢٠٠٠» (set limit) — each confirms first.
+
 ## Defaults
 
 Arabic language, currency EGP, up to 10 members per family.
 
 ## Distribution
 
-- Web app: https://budget-home-bayoumi.web.app
+- Web app: https://home-budgets.web.app (primary) — also https://budget-home-bayoumi.web.app.
+  Note: web Google sign-in works on desktop Chrome / Samsung Browser but not Chrome-on-Android
+  — on phones use the APK. See [Authentication & Family Model](auth-and-family-model.md).
 - Android APK: stable link via GitHub Releases (see [Development & Deployment](dev-and-deploy.md)).
 
 ## See also

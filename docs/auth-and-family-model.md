@@ -33,25 +33,37 @@ must match the one carried by the invite. No SMS/OTP is involved.
   required; the joiner just enters their name (phone optional — a matching phone reuses an
   admin-pre-registered slot and its permissions).
 - **Returning login:** after sign-in the auth screen lists the account's existing memberships
-  and shows an **enter** button per family (with the role) — returning members/admins log in,
-  they do not re-join. Re-join only appears for a brand-new member with no membership.
-- **Session restore** keys off the login UID via the `members.authUid` collection-group index.
-  `restoreSession` calls `waitForAuthReady()` first, because Firebase restores `currentUser`
-  asynchronously on cold start.
+  (matched by **both `authUid` and email**, so every slot the account owns shows — e.g. admin +
+  a child in the same family) with an **enter** button per slot (name + role). Returning
+  members/admins log in, they do not re-join. Re-join only appears for a brand-new member.
+- **Account recovery:** members are keyed by **`phone_<phone>`**, so reusing one phone for two
+  people collapses them into one record (e.g. a worker created with the admin's phone overwrites
+  the admin row). **"عائلتك بلا قائد؟ استعد حساب القائد"** on the login screen reconnects the row
+  that `families.adminId` points at to the current login and strips any worker tag. The admin can
+  also re-bind by phone. A person's **phone is editable only while their slot is still pending**
+  (not yet joined); after they join it's fixed.
+- **Session restore** keys off the login via the `members.authUid` **and** `members.email`
+  collection-group indexes. `restoreSession` calls `waitForAuthReady()` first, because Firebase
+  restores `currentUser` asynchronously on cold start, and remembers the exact member last
+  chosen.
 
 ## Known constraints
 
-- Web Google requires the Google Cloud OAuth web client to authorize origin
-  `https://budget-home-bayoumi.web.app` and redirect URI `…/__/auth/handler` (console-only;
-  no CLI). Without it: `redirect_uri_mismatch`.
-- Web `authDomain` is set to `budget-home-bayoumi.web.app` (same-origin) to avoid
-  storage-partitioning ("missing initial state"). Re-running `flutterfire configure` reverts it
-  to `firebaseapp.com` — re-apply afterward.
-- **Mobile-browser Google sign-in is unreliable** (popup/redirect storage partitioning). On
-  phones use the **APK** (native Google) or **email/password** on mobile web.
+- **Auth domain is the Firebase default `budget-home-bayoumi.firebaseapp.com`** (NOT a custom
+  web.app domain). Google specially handles `firebaseapp.com` for sign-in across browsers; a
+  custom `home-budgets.web.app` authDomain broke **Chrome-on-Android** sign-in. Re-running
+  `flutterfire configure` resets authDomain — re-apply this value.
+- The OAuth web client must list the app origins as **Authorized JavaScript origins** and the
+  handler **redirect URI** `https://budget-home-bayoumi.firebaseapp.com/__/auth/handler`
+  (console-only; no CLI). Missing the redirect URI → "access blocked / redirect_uri_mismatch".
+- **Web Google sign-in fails inside Chrome on Android** — the Firebase popup/redirect handler
+  needs storage that mobile Chrome partitions ("missing initial state"). Desktop Chrome and
+  Samsung Browser work. A GIS/FedCM rewrite was attempted and **reverted** (it blanked the web
+  app); don't re-attempt without a real device to test on. **On Android use the APK** (native
+  Google sign-in works); on mobile web use Samsung Browser or email/password.
 
-Console prerequisites in place: Google and Email/Password providers enabled; the Android SHA-1
-is registered.
+Console prerequisites in place: Google and Email/Password providers enabled; the **release**
+APK's Android SHA-1/SHA-256 are registered (required after switching to release signing).
 
 ## See also
 

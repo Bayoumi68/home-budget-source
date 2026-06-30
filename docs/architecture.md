@@ -4,9 +4,10 @@ A client-side Flutter app over Firebase. Code in `lib/` is organized in three la
 
 ## Layers
 
-- **screens/** — UI. Key screens: splash, auth, chat (the main logging surface), analytics
-  (reports), members, member_detail (admin's per-member view), teams, group_settings,
-  notifications.
+- **screens/** — UI. Key screens: splash, auth, chat (the main logging surface; long-press a
+  message to reply WhatsApp-style or copy it), analytics (reports), members, member_detail
+  (admin's per-member view: wallet, fund/withdraw, and the conversation with that member),
+  teams, group_settings (+ learned-keywords review), notifications.
 - **providers/** — app state via `ChangeNotifier`: auth, budget, chat, notification, theme.
 - **services/** — integrations and logic: `auth_service` (Firebase Auth), `database_service`
   (Firestore reads/writes), `ai_service` (offline Arabic parser), `voice_service`
@@ -54,22 +55,29 @@ Two independent axes — **people** and **accounts**:
 Period picker (today/week/month/3mo/all/custom) + a member filter (admin). Collapsible
 sections: summary (expenses/balance/income/net), by-category (pie+list), by-member balances,
 by-wallet, over-time trend, budgets-vs-actual — all scoped to the viewer (members see only
-their own).
+their own). Each **by-wallet row folds/expands** to that wallet's full DR/CR ledger movement.
 
 ## Offline Arabic parser (`ai_service.dart`)
 
-The "AI" is **not an API or ML model** — it is a deterministic, fully offline rule/keyword
-parser. Per message it:
+The "AI" is **not an API or ML model** — a deterministic, fully offline rule/keyword parser,
+and **intent-first**: the **verb decides the action**, not the presence of a number.
 
-1. **Extracts the amount** — currency-anchored; skips quantities/units so "2 كيلو" isn't read
-   as the price.
-2. **Detects the category** — score-based keyword matching with edit-distance (Levenshtein)
-   tolerance for typos.
-3. **Classifies income vs expense** — keyword signals; refunds count as income.
+- **Money commands** (`parseMoneyCommand`) are matched first, by verb — so a number alone is
+  never assumed to be an expense:
+  - **add** (إضافة/أضف), **withdraw** (اسحب/سحب), **transfer** (حول/تحويل/نقل),
+    **raise/lower a spending limit** (رفع حد/تزويد | خفض/تخفيض/تنزيل حد).
+  - Direction words **من / إلى / لـ** resolve source/target to a **wallet or a person**
+    (member/worker) by name; anything unspecified prompts a picker. All are admin-only,
+    **confirm before executing**, and **notify both parties**.
+- **Expense / income** is the fallback only when no money verb is present: extracts the amount
+  (currency-anchored, skips quantities/units), detects the category (keyword + Levenshtein
+  typo tolerance), classifies income vs expense.
+- **Wallet questions** — balance (رصيد المحفظة) and statement (حركة/كشف المحفظة).
 
 **Learning loop:** correcting a transaction's category (long-press → change type) stores that
-message's words → category in the `learnedKeywords` collection; later parses consult learned
-keywords first. The app adapts per family with no server and no model.
+message's words → category in `learnedKeywords`; later parses consult learned keywords first.
+An admin reviews/deletes wrong ones in **Settings → الكلمات المتعلَّمة**. Only *categories* are
+learned — the action verbs above are fixed in code. The app adapts per family, no server/model.
 
 ## Categories
 
