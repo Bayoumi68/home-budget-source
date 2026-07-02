@@ -1210,6 +1210,12 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             child: Text('Home Budgets v${AppConstants.appVersion}',
                 style: TextStyle(color: Colors.grey, fontSize: 12)),
           ),
+          const SizedBox(height: 4),
+          const Center(
+            child: Text('فكرة: كمال · تصميم: بيومي وكمال',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
+          ),
         ],
       ),
     );

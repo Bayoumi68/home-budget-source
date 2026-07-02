@@ -39,6 +39,8 @@ Home Budgets تطبيق بسيط لإدارة ميزانية العائلة وا
 
 مناسب للعائلات. مجاني.
 
+فكرة: كمال · تصميم: بيومي وكمال
+
 ---
 
 ## Full description — English
@@ -58,6 +60,8 @@ Features:
 • Your data is stored securely and synced across the devices of your group.
 
 Family-friendly. Free.
+
+Idea by Kamal · Designed by Bayoumi & Kamal
 
 ---
 

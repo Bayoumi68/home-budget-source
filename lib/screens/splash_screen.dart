@@ -126,6 +126,11 @@ class _SplashScreenState extends State<SplashScreen> {
               AppConstants.appVersion,
               style: TextStyle(fontSize: 12, color: Colors.white70),
             ),
+            const SizedBox(height: 6),
+            const Text(
+              'فكرة: كمال · تصميم: بيومي وكمال',
+              style: TextStyle(fontSize: 12, color: Colors.white70),
+            ),
             const SizedBox(height: 48),
             const CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation<Color>(Colors.white),

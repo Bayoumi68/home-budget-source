@@ -3,11 +3,11 @@ class AppConstants {
   static const String appWebLink = 'https://home-budgets.web.app';
   static const String androidDownloadLink =
       'https://home-budgets.web.app/download.html';
-  static const String appVersion = '0.5.82-newpackage';
+  static const String appVersion = '0.5.83';
   // Monotonic build number, kept in sync with pubspec (+NNNN). Published to
   // <appWebLink>/version.json at deploy and compared by every device to
   // detect a newer release. BUMP THIS with every release.
-  static const int appBuild = 2082;
+  static const int appBuild = 2083;
   // TESTING: when true, phone-auth uses Firebase's app-verification-disabled
   // mode + test phone numbers — no reCAPTCHA image puzzle, no real SMS. This
   // applies to release/deployed builds too, so the family can test now. Set to
