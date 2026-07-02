@@ -5,6 +5,7 @@ import '../models/chat_message_model.dart';
 import '../models/category_model.dart';
 import '../providers/avatar_provider.dart';
 import '../providers/budget_provider.dart';
+import '../utils/money_format.dart';
 
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
@@ -133,7 +134,7 @@ class ChatBubble extends StatelessWidget {
                             const SizedBox(width: 6),
                             Icon(Icons.attach_money, size: 16, color: amountColor),
                             Text(
-                              '${message.amount!.toStringAsFixed(0)} ج',
+                              '${formatMoney(message.amount!)} ج',
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,

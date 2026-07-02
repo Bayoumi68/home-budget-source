@@ -7,6 +7,7 @@ import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
+import '../utils/money_format.dart';
 
 /// Opened from the chat header's "مصروفات العائلة" total. Lists each member
 /// with their spending this month, each line tappable to expand/collapse the
@@ -55,7 +56,6 @@ class _ExpensesOverviewScreenState extends State<ExpensesOverviewScreen> {
     final budget = context.watch<BudgetProvider>();
     final user = context.watch<AuthProvider>().user;
     final isAdmin = user?.isAdmin == true;
-    final fmt = NumberFormat('#,##0');
 
     final monthExpenses = budget.transactions
         .where((t) => t.isExpense && _thisMonth(t.date))
@@ -101,7 +101,7 @@ class _ExpensesOverviewScreenState extends State<ExpensesOverviewScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
-                  _totalCard(total, fmt),
+                  _totalCard(total),
                   const SizedBox(height: 12),
                   if (total == 0)
                     const Padding(
@@ -109,14 +109,14 @@ class _ExpensesOverviewScreenState extends State<ExpensesOverviewScreen> {
                       child: Center(child: Text('لا توجد مصاريف هذا الشهر.')),
                     )
                   else
-                    ...rows.map((r) => _memberCard(r, fmt)),
+                    ...rows.map(_memberCard),
                 ],
               ),
             ),
     );
   }
 
-  Widget _totalCard(double total, NumberFormat fmt) => Card(
+  Widget _totalCard(double total) => Card(
         color: AppTheme.primaryDark,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
@@ -125,7 +125,7 @@ class _ExpensesOverviewScreenState extends State<ExpensesOverviewScreen> {
               const Text('إجمالي مصروفات هذا الشهر',
                   style: TextStyle(color: Colors.white70, fontSize: 14)),
               const SizedBox(height: 6),
-              Text('${fmt.format(total)} ج',
+              Text('${formatMoney(total)} ج',
                   style: const TextStyle(
                       color: AppTheme.expenseRed,
                       fontSize: 26,
@@ -135,7 +135,7 @@ class _ExpensesOverviewScreenState extends State<ExpensesOverviewScreen> {
         ),
       );
 
-  Widget _memberCard(_MemberExpenses r, NumberFormat fmt) {
+  Widget _memberCard(_MemberExpenses r) {
     final expanded = _expanded.contains(r.id);
     final txns = [...r.txns]..sort((a, b) => b.date.compareTo(a.date));
     return Card(
@@ -169,7 +169,7 @@ class _ExpensesOverviewScreenState extends State<ExpensesOverviewScreen> {
                       ],
                     ),
                   ),
-                  Text('${fmt.format(r.total)} ج',
+                  Text('${formatMoney(r.total)} ج',
                       style: const TextStyle(
                           color: AppTheme.expenseRed,
                           fontWeight: FontWeight.bold)),
@@ -192,14 +192,14 @@ class _ExpensesOverviewScreenState extends State<ExpensesOverviewScreen> {
                 ),
               )
             else
-              ...txns.map((t) => _txnLine(t, fmt)),
+              ...txns.map(_txnLine),
           ],
         ],
       ),
     );
   }
 
-  Widget _txnLine(TransactionModel t, NumberFormat fmt) {
+  Widget _txnLine(TransactionModel t) {
     final dt = DateFormat('yyyy/MM/dd');
     final note = (t.note ?? '').trim();
     final cat = t.category.trim().isEmpty ? 'أخرى' : t.category.trim();
@@ -219,7 +219,7 @@ class _ExpensesOverviewScreenState extends State<ExpensesOverviewScreen> {
               ],
             ),
           ),
-          Text('${fmt.format(t.amount)} ج',
+          Text('${formatMoney(t.amount)} ج',
               style: const TextStyle(
                   color: AppTheme.expenseRed, fontWeight: FontWeight.w600)),
         ],

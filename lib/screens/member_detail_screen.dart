@@ -10,6 +10,7 @@ import '../models/wallet_entry_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/database_service.dart';
 import '../services/voice_service.dart';
+import '../utils/money_format.dart';
 
 /// Admin's view of a single member: their wallet, fund/withdraw, and a direct
 /// message box. The message is delivered to the member's chat (targetUserId).
@@ -31,7 +32,6 @@ class MemberDetailScreen extends StatefulWidget {
 class _MemberDetailScreenState extends State<MemberDetailScreen> {
   final _db = DatabaseService();
   final _voice = VoiceService();
-  final _money = NumberFormat('#,###');
   final _msgController = TextEditingController();
   late UserModel _member;
   bool _loading = true;
@@ -162,7 +162,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                     .map((w) => DropdownMenuItem(
                           value: w,
                           child: Text(
-                              '${w.name} (${w.balance.toStringAsFixed(0)} ج)'),
+                              '${w.name} (${formatMoney(w.balance)} ج)'),
                         ))
                     .toList(),
                 onChanged: (v) => setDialog(() => source = v ?? source),
@@ -215,8 +215,8 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
     if (!mounted) return;
     setState(() => _busy = false);
     final successMsg = withdraw
-        ? 'تم سحب ${_money.format(amount)} ج'
-        : 'تم تمويل ${_member.name} بـ ${_money.format(amount)} ج';
+        ? 'تم سحب ${formatMoney(amount)} ج'
+        : 'تم تمويل ${_member.name} بـ ${formatMoney(amount)} ج';
     if (error == null && admin != null) {
       await _db.notifyMultiple(
         widget.groupId,
@@ -394,7 +394,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(m.type == MessageType.expense && m.amount != null
-                ? '${m.category ?? 'مصروف'}: ${m.amount!.toStringAsFixed(0)} ج'
+                ? '${m.category ?? 'مصروف'}: ${formatMoney(m.amount!)} ج'
                 : m.content),
             const SizedBox(height: 2),
             Text(DateFormat('MM/dd HH:mm').format(m.timestamp),
@@ -454,7 +454,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                                 ],
                               ),
                             ),
-                            Text('${_money.format(w?.balance ?? 0)} ج',
+                            Text('${formatMoney(w?.balance ?? 0)} ج',
                                 style: const TextStyle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.bold,
@@ -581,11 +581,11 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
             .map((e) => DataRow(cells: [
                   DataCell(Text(df.format(e.at))),
                   DataCell(Text(_statement(e))),
-                  DataCell(Text(e.isDebit ? _money.format(e.amount) : '—',
+                  DataCell(Text(e.isDebit ? formatMoney(e.amount) : '—',
                       style: const TextStyle(color: AppTheme.incomeGreen))),
-                  DataCell(Text(!e.isDebit ? _money.format(e.amount) : '—',
+                  DataCell(Text(!e.isDebit ? formatMoney(e.amount) : '—',
                       style: const TextStyle(color: AppTheme.expenseRed))),
-                  DataCell(Text(_money.format(e.balanceAfter))),
+                  DataCell(Text(formatMoney(e.balanceAfter))),
                 ]))
             .toList(),
       ),

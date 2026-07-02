@@ -17,6 +17,7 @@ import '../config/constants.dart';
 import '../data/category_seeds.dart';
 import '../services/auth_service.dart';
 import '../utils/category_utils.dart';
+import '../utils/money_format.dart';
 import '../utils/expense_description.dart';
 
 class FamilyMembership {
@@ -1025,6 +1026,16 @@ class DatabaseService {
       },
     );
 
+    // 7b) Move the profile photo — avatars are keyed by member id
+    // (avatars/{memberId}), so without this the person silently loses
+    // their photo after a phone change.
+    final avatarSnap = await _avatars(groupId).doc(oldId).get();
+    final avatarData = avatarSnap.data();
+    if (avatarSnap.exists && avatarData != null) {
+      await _avatars(groupId).doc(newId).set(avatarData);
+      await _avatars(groupId).doc(oldId).delete();
+    }
+
     // 8) Delete the OLD member doc LAST — only reached once every step above
     // has succeeded without throwing.
     await _members(groupId).doc(oldId).delete();
@@ -1065,10 +1076,6 @@ class DatabaseService {
       final group = await getGroupById(groupId) ?? await getActiveGroup();
       if (group != null) await saveActiveSession(updated, group);
     }
-  }
-
-  Future<void> removeMember(String groupId, String userId) async {
-    await _members(groupId).doc(userId).delete();
   }
 
   Future<double> getMemberMonthlySpending(String groupId, String userId) async {
@@ -1187,14 +1194,60 @@ class DatabaseService {
     }, SetOptions(merge: true));
   }
 
-  /// Remove a worker from a team and delete their worker record + archive their
-  /// wallet (workers belong to the team, not the family).
-  Future<void> removeWorker(
+  /// Remove a worker from a team and delete their worker record + archive
+  /// their wallet (workers belong to the team, not the family). Refuses while
+  /// the wallet still holds money — same rule as deleteWallet — so a removal
+  /// can never strand a balance inside an archived wallet. Returns an Arabic
+  /// error, or null on success.
+  Future<String?> removeWorker(
       String groupId, TeamModel team, String workerId) async {
+    // The wallet is found by ownerId, never by recomputing the doc id: a
+    // phone re-key repoints ownerId but the wallet doc keeps its original
+    // id forever, so mem_<currentMemberId> may not exist.
+    final wallet = await _memberWalletOf(groupId, workerId);
+    if (wallet != null && wallet.balance.abs() > 0.005) {
+      return 'محفظة العامل بها رصيد ${formatMoney(wallet.balance)} ج — '
+          'اسحبه أولًا ثم أعد المحاولة.';
+    }
     await removeTeamMember(groupId, team, workerId);
     await _members(groupId).doc(workerId).delete();
-    final wid = 'mem_${_docSafeId(workerId)}';
-    await _wallets(groupId).doc(wid).set({
+    if (wallet != null) await _archiveWallet(groupId, wallet.id);
+    return null;
+  }
+
+  /// Remove a family member: same semantics as removing a worker — refuse
+  /// while their wallet holds money, then delete the member doc, archive the
+  /// wallet (found by ownerId), and drop the stale id from the family doc's
+  /// memberIds list. Returns an Arabic error, or null on success.
+  Future<String?> removeFamilyMember(String groupId, String userId) async {
+    final wallet = await _memberWalletOf(groupId, userId);
+    if (wallet != null && wallet.balance.abs() > 0.005) {
+      return 'محفظة العضو بها رصيد ${formatMoney(wallet.balance)} ج — '
+          'اسحبه أولًا ثم أعد المحاولة.';
+    }
+    await _members(groupId).doc(userId).delete();
+    if (wallet != null) await _archiveWallet(groupId, wallet.id);
+    final famSnap = await _families.doc(groupId).get();
+    final ids =
+        List<String>.from((famSnap.data()?['memberIds'] ?? const []) as List);
+    if (ids.contains(userId)) {
+      await _families.doc(groupId).set(
+          {'memberIds': ids.where((id) => id != userId).toList()},
+          SetOptions(merge: true));
+    }
+    return null;
+  }
+
+  Future<WalletModel?> _memberWalletOf(String groupId, String memberId) async {
+    final wallets = await getWalletsSync(groupId);
+    for (final w in wallets) {
+      if (w.isMemberWallet && w.ownerId == memberId) return w;
+    }
+    return null;
+  }
+
+  Future<void> _archiveWallet(String groupId, String walletId) async {
+    await _wallets(groupId).doc(walletId).set({
       'archived': true,
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
@@ -1232,14 +1285,18 @@ class DatabaseService {
     }, SetOptions(merge: true));
   }
 
-  Future<void> deleteTeam(String groupId, String teamId) async {
+  /// Deleting a team deletes its expenses THROUGH deleteTransaction (refund +
+  /// atomic delete per expense), never by batch-deleting the raw docs — the
+  /// old batch delete left the workers' wallets debited with orphaned ledger
+  /// entries, which the reconcile self-heal then faithfully resurrected as
+  /// new transactions, making team deletion silently undo itself.
+  Future<void> deleteTeam(String groupId, String teamId,
+      {String? byName, String? byPhone}) async {
     final txns = await getTeamTransactions(groupId, teamId);
-    final batch = _fs.batch();
     for (final txn in txns) {
-      batch.delete(_transactions(groupId).doc(txn.id));
+      await deleteTransaction(groupId, txn.id, byName: byName, byPhone: byPhone);
     }
-    batch.delete(_teams(groupId).doc(teamId));
-    await batch.commit();
+    await _teams(groupId).doc(teamId).delete();
   }
 
   Future<List<TransactionModel>> getTeamTransactions(
@@ -1412,7 +1469,7 @@ class DatabaseService {
     await q.docs.first.reference.update({
       'isDeleted': true,
       'content':
-          'تم حذف هذا الإدخال وإرجاع ${amount.toStringAsFixed(0)} ج من $category إلى الميزانية',
+          'تم حذف هذا الإدخال وإرجاع ${formatMoney(amount)} ج من $category إلى الميزانية',
     });
   }
 
@@ -2654,15 +2711,15 @@ class DatabaseService {
                 : 'آخر $days يوم';
     final lines = <String>[
       '📊 $title — $period',
-      'إجمالي التمويل: ${funded.toStringAsFixed(0)} ج',
-      'إجمالي المصروفات: ${expenses.toStringAsFixed(0)} ج',
-      'الرصيد الحالي: ${balance.toStringAsFixed(0)} ج',
+      'إجمالي التمويل: ${formatMoney(funded)} ج',
+      'إجمالي المصروفات: ${formatMoney(expenses)} ج',
+      'الرصيد الحالي: ${formatMoney(balance)} ج',
     ];
 
     if (top.isNotEmpty) {
       lines.add('أكبر بنود الصرف:');
       for (final e in top.take(8)) {
-        lines.add('• ${e.key}: ${e.value.toStringAsFixed(0)} ج');
+        lines.add('• ${e.key}: ${formatMoney(e.value)} ج');
       }
     } else {
       lines.add('لا توجد مصروفات مسجلة في هذه الفترة.');
@@ -2678,10 +2735,10 @@ class DatabaseService {
         for (final b in budgets) {
           final remaining = b.limit - b.spent;
           final status = remaining >= 0
-              ? 'متبقي ${remaining.toStringAsFixed(0)} ج'
-              : 'تجاوز ${(-remaining).toStringAsFixed(0)} ج';
+              ? 'متبقي ${formatMoney(remaining)} ج'
+              : 'تجاوز ${formatMoney(-remaining)} ج';
           lines.add(
-              '• ${b.category}: حد ${b.periodLabel} ${b.limit.toStringAsFixed(0)} ج — صرف ${b.spent.toStringAsFixed(0)} ج — $status');
+              '• ${b.category}: حد ${b.periodLabel} ${formatMoney(b.limit)} ج — صرف ${formatMoney(b.spent)} ج — $status');
         }
       }
     }

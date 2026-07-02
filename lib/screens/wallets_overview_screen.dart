@@ -7,6 +7,7 @@ import '../models/wallet_entry_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
+import '../utils/money_format.dart';
 
 /// Opened from the chat header's "رصيد المحافظ" total. Lists every wallet the
 /// user may see (admin: cash sources ONLY — a family member's or worker's
@@ -57,7 +58,6 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
     final budget = context.watch<BudgetProvider>();
     final user = context.watch<AuthProvider>().user;
     final isAdmin = user?.isAdmin == true;
-    final fmt = NumberFormat('#,##0');
 
     final wallets = (isAdmin
             ? budget.wallets.where((w) => w.isAdminWallet)
@@ -80,7 +80,7 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
-                  _totalCard(total, fmt),
+                  _totalCard(total),
                   const SizedBox(height: 12),
                   if (wallets.isEmpty)
                     const Padding(
@@ -88,14 +88,14 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
                       child: Center(child: Text('لا توجد محافظ بعد.')),
                     )
                   else
-                    ...wallets.map((w) => _walletCard(w, fmt)),
+                    ...wallets.map(_walletCard),
                 ],
               ),
             ),
     );
   }
 
-  Widget _totalCard(double total, NumberFormat fmt) => Card(
+  Widget _totalCard(double total) => Card(
         color: AppTheme.primaryDark,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
@@ -104,7 +104,7 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
               const Text('إجمالي الرصيد',
                   style: TextStyle(color: Colors.white70, fontSize: 14)),
               const SizedBox(height: 6),
-              Text('${fmt.format(total)} ج',
+              Text('${formatMoney(total)} ج',
                   style: const TextStyle(
                       color: AppTheme.incomeGreen,
                       fontSize: 26,
@@ -114,7 +114,7 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
         ),
       );
 
-  Widget _walletCard(WalletModel w, NumberFormat fmt) {
+  Widget _walletCard(WalletModel w) {
     final expanded = _expanded.contains(w.id);
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -149,7 +149,7 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
                             style:
                                 const TextStyle(fontWeight: FontWeight.w600)),
                         Text(
-                          'الرصيد: ${fmt.format(w.balance)} ج'
+                          'الرصيد: ${formatMoney(w.balance)} ج'
                           '${w.description.isEmpty ? '' : ' — ${w.description}'}',
                           style: const TextStyle(
                               fontSize: 12, color: Colors.grey),
@@ -166,14 +166,14 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
           ),
           if (expanded) ...[
             const Divider(height: 1),
-            _ledger(w, fmt),
+            _ledger(w),
           ],
         ],
       ),
     );
   }
 
-  Widget _ledger(WalletModel w, NumberFormat fmt) {
+  Widget _ledger(WalletModel w) {
     return FutureBuilder<List<WalletEntryModel>>(
       future: _entriesFor(w),
       builder: (ctx, snap) {
@@ -216,14 +216,14 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
                     DataCell(Text(dt.format(e.at))),
                     DataCell(Text(_statement(e))),
                     DataCell(Text(
-                      e.isDebit ? fmt.format(e.amount) : '—',
+                      e.isDebit ? formatMoney(e.amount) : '—',
                       style: const TextStyle(color: AppTheme.incomeGreen),
                     )),
                     DataCell(Text(
-                      !e.isDebit ? fmt.format(e.amount) : '—',
+                      !e.isDebit ? formatMoney(e.amount) : '—',
                       style: const TextStyle(color: AppTheme.expenseRed),
                     )),
-                    DataCell(Text(fmt.format(e.balanceAfter))),
+                    DataCell(Text(formatMoney(e.balanceAfter))),
                     DataCell(Text(e.byLabel)),
                   ]),
                 )

@@ -1,3 +1,5 @@
+import 'money_format.dart';
+
 /// The one place an expense/income's "raw text + detected type" description is
 /// built. Called once at write time and stored (TransactionModel.description,
 /// the wallet-ledger entry's note) so every consumer shows the identical
@@ -23,9 +25,7 @@ String buildExpenseBubbleContent({
   required String rawText,
 }) {
   final prefix = isExpense ? 'مصروف' : 'دخل';
-  final amountText = amount.truncateToDouble() == amount
-      ? amount.toStringAsFixed(0)
-      : amount.toStringAsFixed(2);
+  final amountText = formatMoney(amount);
   final text = rawText.trim();
   return text.isEmpty ? '$prefix $amountText ج' : '$prefix $amountText ج — $text';
 }

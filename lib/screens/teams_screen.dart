@@ -12,6 +12,7 @@ import '../models/wallet_entry_model.dart';
 import '../models/wallet_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/database_service.dart';
+import '../utils/money_format.dart';
 import '../widgets/wallet_ledger_table.dart';
 import 'team_chat_screen.dart';
 
@@ -25,7 +26,6 @@ class TeamsScreen extends StatefulWidget {
 
 class _TeamsScreenState extends State<TeamsScreen> {
   final _db = DatabaseService();
-  final _money = NumberFormat('#,###');
   bool _loading = true;
   String? _error;
   List<UserModel> _members = [];
@@ -224,7 +224,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
         title: Text(team.name,
             style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(
-            'إجمالي أرصدة الأعضاء: ${_money.format(rollup)} ج — صرفوا: ${_money.format(spent)} ج'),
+            'إجمالي أرصدة الأعضاء: ${formatMoney(rollup)} ج — صرفوا: ${formatMoney(spent)} ج'),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         children: [
           // Rollup: one line per WORKER = their own wallet balance (+ spend).
@@ -322,7 +322,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
                       Text(w.name,
                           style: const TextStyle(fontWeight: FontWeight.w600)),
                       Text(
-                        'صرف: ${_money.format(memberSpent)} ج'
+                        'صرف: ${formatMoney(memberSpent)} ج'
                         '${(w.phone ?? '').isEmpty ? '' : ' — ${w.phone}'}'
                         '${(w.email ?? '').isEmpty ? '' : '\n${w.email}'}',
                         style:
@@ -331,7 +331,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
                     ],
                   ),
                 ),
-                Text('الرصيد ${_money.format(_memberBalance(w.id))} ج',
+                Text('الرصيد ${formatMoney(_memberBalance(w.id))} ج',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
                 if (canManage)
                   PopupMenuButton<String>(
@@ -614,7 +614,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
                     .map((w) => DropdownMenuItem(
                         value: w,
                         child: Text(
-                            '${w.name} (${_money.format(w.balance)} ج)')))
+                            '${w.name} (${formatMoney(w.balance)} ج)')))
                     .toList(),
                 onChanged: (v) => setDialog(() => source = v ?? source),
               ),
@@ -659,8 +659,8 @@ class _TeamsScreenState extends State<TeamsScreen> {
     );
     if (!mounted) return;
     final successMsg = withdraw
-        ? 'تم سحب ${_money.format(amount)} ج من ${worker.name}'
-        : 'تم تمويل ${worker.name} بـ ${_money.format(amount)} ج';
+        ? 'تم سحب ${formatMoney(amount)} ج من ${worker.name}'
+        : 'تم تمويل ${worker.name} بـ ${formatMoney(amount)} ج';
     if (error == null && user != null) {
       await _db.notifyMultiple(
         widget.groupId,
@@ -681,10 +681,15 @@ class _TeamsScreenState extends State<TeamsScreen> {
   Future<void> _removeWorker(TeamModel team, UserModel worker) async {
     final ok = await _confirm(
       'إزالة عامل',
-      'إزالة ${worker.name} من فريق ${team.name}؟ سيتم حذف سجله ومحفظته.',
+      'إزالة ${worker.name} من فريق ${team.name}؟ سيتم حذف سجله وأرشفة محفظته '
+      '(يُرفض إذا كان بها رصيد — اسحبه أولًا).',
     );
     if (ok != true) return;
-    await _db.removeWorker(widget.groupId, team, worker.id);
+    final err = await _db.removeWorker(widget.groupId, team, worker.id);
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      return;
+    }
     await _load();
   }
 
@@ -712,7 +717,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('${_money.format(txn.amount)} ج',
+              Text('${formatMoney(txn.amount)} ج',
                   style: const TextStyle(fontWeight: FontWeight.bold)),
               if (canManage)
                 IconButton(
@@ -782,7 +787,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
   ) async {
     final ok = await _confirm(
       'حذف مصروف',
-      'هل تريد حذف ${_money.format(txn.amount)} ج من فريق ${team.name}؟',
+      'هل تريد حذف ${formatMoney(txn.amount)} ج من فريق ${team.name}؟',
     );
     if (ok != true) return;
     final user = context.read<AuthProvider>().user;
@@ -798,7 +803,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
         widget.groupId,
         title: 'حذف مصروف فريق ${team.name}',
         body:
-            '${user.name} حذف ${_money.format(txn.amount)} ج - ${txn.category}',
+            '${user.name} حذف ${formatMoney(txn.amount)} ج - ${txn.category}',
         actorId: user.id,
         actorName: user.name,
         targetUserIds: <String>{team.ownerId, user.id, ...team.memberIds}
@@ -812,10 +817,13 @@ class _TeamsScreenState extends State<TeamsScreen> {
   Future<void> _deleteTeam(TeamModel team) async {
     final ok = await _confirm(
       'حذف الفريق',
-      'سيتم حذف فريق ${team.name} ومصروفاته الخاصة. هل أنت متأكد؟',
+      'سيتم حذف فريق ${team.name} ومصروفاته، وإرجاع قيمة كل مصروف إلى محفظة '
+      'صاحبه (كما عند حذف مصروف واحد). هل أنت متأكد؟',
     );
     if (ok != true) return;
-    await _db.deleteTeam(widget.groupId, team.id);
+    final user = context.read<AuthProvider>().user;
+    await _db.deleteTeam(widget.groupId, team.id,
+        byName: user?.name, byPhone: user?.phone);
     await _load();
   }
 

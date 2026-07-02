@@ -16,6 +16,7 @@ import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/team_member_home_screen.dart';
+import 'widgets/ad_banner_slot.dart';
 
 Future<void> main() async {
   runZonedGuarded(() async {
@@ -33,6 +34,10 @@ Future<void> main() async {
       );
       FirebaseFirestore.instance.settings =
           const Settings(persistenceEnabled: true);
+      // Google Mobile Ads (Android/iOS; no-op on web — AdSense loads there
+      // via its own script tag). Fire-and-forget: the banner slot shows its
+      // placeholder until the first ad fills.
+      initPlatformAds();
       runApp(const BudgetHomeApp());
     } catch (e) {
       runApp(AppStartupError(message: e.toString()));
@@ -116,6 +121,15 @@ class BudgetHomeApp extends StatelessWidget {
             theme: AppTheme.lightTheme,
             darkTheme: AppTheme.darkTheme,
             themeMode: themeProvider.mode,
+            // The ad banner lives BELOW the Navigator, so it shows on every
+            // screen of the app (chat, reports, teams, settings, ...) without
+            // each Scaffold needing to include it.
+            builder: (context, child) => Column(
+              children: [
+                Expanded(child: child ?? const SizedBox.shrink()),
+                const AdBannerSlot(),
+              ],
+            ),
             home: const SplashScreen(),
             onGenerateRoute: (settings) {
               switch (settings.name) {

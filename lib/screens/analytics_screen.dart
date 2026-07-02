@@ -11,6 +11,7 @@ import '../models/wallet_entry_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
+import '../utils/money_format.dart';
 import '../utils/period_utils.dart';
 
 class AnalyticsScreen extends StatefulWidget {
@@ -23,7 +24,6 @@ class AnalyticsScreen extends StatefulWidget {
 
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
   final _db = DatabaseService();
-  final _money = NumberFormat('#,###');
   // Default to full history, matching the wallet ledger cards (which are
   // never period-filtered) — a 'month' default silently hid real data with
   // no indicator why, reading as a bug.
@@ -270,20 +270,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           title: 'إجمالي التمويل',
           amount: funded,
           color: AppTheme.gold,
-          icon: Icons.trending_up_rounded,
-          money: _money),
+          icon: Icons.trending_up_rounded),
       _SummaryCard(
           title: isAdmin ? 'المصروفات' : 'مصروفاتي',
           amount: expenses,
           color: AppTheme.expenseRed,
-          icon: Icons.trending_down_rounded,
-          money: _money),
+          icon: Icons.trending_down_rounded),
       _SummaryCard(
           title: 'الصافي (الرصيد)',
           amount: balance,
           color: AppTheme.incomeGreen,
-          icon: Icons.account_balance_wallet_rounded,
-          money: _money),
+          icon: Icons.account_balance_wallet_rounded),
     ];
     return Wrap(
       spacing: 12,
@@ -325,7 +322,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 color: AppTheme.accentTeal,
                 backgroundColor: Colors.grey.shade200,
               ),
-              trailing: Text('${_money.format(e.value)} ج\n${pct.toStringAsFixed(0)}%',
+              trailing: Text('${formatMoney(e.value)} ج\n${pct.toStringAsFixed(0)}%',
                   textAlign: TextAlign.end,
                   style: const TextStyle(
                       fontWeight: FontWeight.bold, color: AppTheme.expenseRed)),
@@ -399,8 +396,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             dense: true,
             leading: const Icon(Icons.person_rounded, color: AppTheme.gold),
             title: Text(m.name),
-            subtitle: Text('صرف: ${_money.format(spent)} ج'),
-            trailing: Text('الرصيد\n${_money.format(balance)} ج',
+            subtitle: Text('صرف: ${formatMoney(spent)} ج'),
+            trailing: Text('الرصيد\n${formatMoney(balance)} ج',
                 textAlign: TextAlign.end,
                 style: TextStyle(
                     fontWeight: FontWeight.bold,
@@ -414,10 +411,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   // ─── By wallet (admin) ───
+  // Every live wallet the admin oversees: cash sources first, then family
+  // members' wallets, then workers' wallets — each expandable to its ledger.
+  // (Worker wallets are monitored here like any other; they still don't
+  // count toward the admin's own balance totals.)
   Widget _byWalletSection(
       List<WalletModel> wallets, List<TransactionModel> txns) {
-    final active =
-        wallets.where((w) => !w.archived && !w.isWorkerWallet).toList();
+    int rank(WalletModel w) =>
+        w.isAdminWallet ? 0 : (w.isWorkerWallet ? 2 : 1);
+    final active = wallets.where((w) => !w.archived).toList()
+      ..sort((a, b) => rank(a).compareTo(rank(b)));
     if (active.isEmpty) return _empty('لا توجد محافظ');
     return Column(
       children: active.map((w) {
@@ -442,22 +445,26 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             dense: true,
             tilePadding: const EdgeInsets.symmetric(horizontal: 12),
             leading: Icon(
-                w.isMemberWallet
-                    ? Icons.person_rounded
-                    : Icons.account_balance_wallet_rounded,
+                w.isWorkerWallet
+                    ? Icons.engineering_rounded
+                    : (w.isMemberWallet
+                        ? Icons.person_rounded
+                        : Icons.account_balance_wallet_rounded),
                 color: AppTheme.accentTeal),
             title: Text(w.name),
             subtitle: Text.rich(TextSpan(children: [
               TextSpan(
-                  text: w.isMemberWallet ? 'محفظة عضو  ' : 'مصدر نقدي  '),
+                  text: w.isWorkerWallet
+                      ? 'محفظة عامل  '
+                      : (w.isMemberWallet ? 'محفظة عضو  ' : 'مصدر نقدي  ')),
               TextSpan(
-                  text: 'وارد ${_money.format(inSum)}  ',
+                  text: 'وارد ${formatMoney(inSum)}  ',
                   style: const TextStyle(color: AppTheme.incomeGreen)),
               TextSpan(
-                  text: 'منصرف ${_money.format(outSum)}  ',
+                  text: 'منصرف ${formatMoney(outSum)}  ',
                   style: const TextStyle(color: AppTheme.expenseRed)),
               TextSpan(
-                  text: 'رصيد ${_money.format(w.balance)} ج',
+                  text: 'رصيد ${formatMoney(w.balance)} ج',
                   style: const TextStyle(fontWeight: FontWeight.bold)),
             ])),
             childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
@@ -496,11 +503,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           return DataRow(cells: [
             DataCell(Text(df.format(e.at))),
             DataCell(Text(note.isNotEmpty ? note : _srcLabel(e.source))),
-            DataCell(Text(e.isDebit ? _money.format(e.amount) : '—',
+            DataCell(Text(e.isDebit ? formatMoney(e.amount) : '—',
                 style: const TextStyle(color: AppTheme.incomeGreen))),
-            DataCell(Text(!e.isDebit ? _money.format(e.amount) : '—',
+            DataCell(Text(!e.isDebit ? formatMoney(e.amount) : '—',
                 style: const TextStyle(color: AppTheme.expenseRed))),
-            DataCell(Text(_money.format(e.balanceAfter))),
+            DataCell(Text(formatMoney(e.balanceAfter))),
           ]);
         }).toList(),
       ),
@@ -613,8 +620,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                     Text(
                       remaining >= 0
-                          ? 'متبقي ${_money.format(remaining)} ج'
-                          : 'تجاوز ${_money.format(-remaining)} ج',
+                          ? 'متبقي ${formatMoney(remaining)} ج'
+                          : 'تجاوز ${formatMoney(-remaining)} ج',
                       style: TextStyle(
                           color: remaining >= 0
                               ? AppTheme.incomeGreen
@@ -632,7 +639,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                    'حد ${b.periodLabel} ${_money.format(b.limit)} ج — صرف ${_money.format(spent)} ج',
+                    'حد ${b.periodLabel} ${formatMoney(b.limit)} ج — صرف ${formatMoney(spent)} ج',
                     style: const TextStyle(fontSize: 12, color: Colors.grey)),
               ],
             ),
@@ -654,13 +661,11 @@ class _SummaryCard extends StatelessWidget {
   final double amount;
   final Color color;
   final IconData icon;
-  final NumberFormat money;
   const _SummaryCard(
       {required this.title,
       required this.amount,
       required this.color,
-      required this.icon,
-      required this.money});
+      required this.icon});
 
   @override
   Widget build(BuildContext context) {
@@ -673,7 +678,7 @@ class _SummaryCard extends StatelessWidget {
           Text(title,
               style: const TextStyle(fontSize: 12, color: Colors.grey)),
           const SizedBox(height: 4),
-          Text('${money.format(amount)} ج',
+          Text('${formatMoney(amount)} ج',
               style: TextStyle(
                   fontSize: 16, fontWeight: FontWeight.bold, color: color)),
         ]),

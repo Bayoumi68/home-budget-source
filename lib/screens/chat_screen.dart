@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:app_links/app_links.dart';
 import '../config/theme.dart';
@@ -25,6 +24,7 @@ import '../services/database_service.dart';
 import '../services/local_notice_service.dart';
 import 'member_detail_screen.dart';
 import '../utils/category_utils.dart';
+import '../utils/money_format.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/expense_confirm_dialog.dart';
 import '../widgets/message_input.dart';
@@ -425,7 +425,7 @@ class _ChatScreenState extends State<ChatScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
-                'الرصيد غير كافٍ في ${selectedWallet.name}. المتاح ${selectedWallet.balance.toStringAsFixed(0)} ج.'),
+                'الرصيد غير كافٍ في ${selectedWallet.name}. المتاح ${formatMoney(selectedWallet.balance)} ج.'),
           ));
         }
         _putTextInInput(text);
@@ -680,11 +680,11 @@ class _ChatScreenState extends State<ChatScreen> {
       if (p == null) return _snack('لمن تضبط الحد؟ اكتب اسمه بوضوح.');
       if (amount == null) return _snack('اكتب قيمة الحد.');
       if (!await _confirmCmd(
-          'ضبط حد ${p.name} الشهري على ${amount.toStringAsFixed(0)} ج؟')) {
+          'ضبط حد ${p.name} الشهري على ${formatMoney(amount)} ج؟')) {
         return;
       }
       await _db.updateMemberLimit(widget.groupId, p.id, amount);
-      await done(null, 'تم ضبط حد ${p.name} على ${amount.toStringAsFixed(0)} ج',
+      await done(null, 'تم ضبط حد ${p.name} على ${formatMoney(amount)} ج',
           targets: [user.id, p.id]);
       return;
     }
@@ -699,7 +699,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final pw = walletOf(toPerson);
         if (from == null || pw == null) return _snack('تعذّر تحديد المحافظ.');
         if (!await _confirmCmd(
-            'تحويل ${amount.toStringAsFixed(0)} ج من ${from.name} إلى ${toPerson.name}؟')) {
+            'تحويل ${formatMoney(amount)} ج من ${from.name} إلى ${toPerson.name}؟')) {
           return;
         }
         final err = await _db.transferBetweenWallets(widget.groupId,
@@ -709,7 +709,7 @@ class _ChatScreenState extends State<ChatScreen> {
             byName: user.name,
             byPhone: user.phone);
         await done(
-            err, 'تم تحويل ${amount.toStringAsFixed(0)} ج إلى ${toPerson.name}',
+            err, 'تم تحويل ${formatMoney(amount)} ج إلى ${toPerson.name}',
             targets: [user.id, toPerson.id]);
         return;
       }
@@ -725,7 +725,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (toW == _walletSelectionCancelled) return;
       if (fromW.id == toW.id) return _snack('اختر محفظتين مختلفتين.');
       if (!await _confirmCmd(
-          'تحويل ${amount.toStringAsFixed(0)} ج من ${fromW.name} إلى ${toW.name}؟')) {
+          'تحويل ${formatMoney(amount)} ج من ${fromW.name} إلى ${toW.name}؟')) {
         return;
       }
       final err = await budget.transfer(widget.groupId,
@@ -744,7 +744,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       await done(
           err,
-          'تم تحويل ${amount.toStringAsFixed(0)} ج من ${fromW.name} إلى ${toW.name}',
+          'تم تحويل ${formatMoney(amount)} ج من ${fromW.name} إلى ${toW.name}',
           targets: involved);
       return;
     }
@@ -756,7 +756,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final to = adminWallets.isNotEmpty ? adminWallets.first : null;
         if (pw == null || to == null) return _snack('تعذّر تحديد المحافظ.');
         if (!await _confirmCmd(
-            'سحب ${amount.toStringAsFixed(0)} ج من ${p.name} إلى ${to.name}؟')) {
+            'سحب ${formatMoney(amount)} ج من ${p.name} إلى ${to.name}؟')) {
           return;
         }
         final err = await _db.transferBetweenWallets(widget.groupId,
@@ -765,7 +765,7 @@ class _ChatScreenState extends State<ChatScreen> {
             amount: amount,
             byName: user.name,
             byPhone: user.phone);
-        await done(err, 'تم سحب ${amount.toStringAsFixed(0)} ج من ${p.name}',
+        await done(err, 'تم سحب ${formatMoney(amount)} ج من ${p.name}',
             targets: [user.id, p.id]);
         return;
       }
@@ -774,12 +774,12 @@ class _ChatScreenState extends State<ChatScreen> {
       if (w == null) return _snack('لا توجد محافظ.');
       if (w == _walletSelectionCancelled) return;
       if (!await _confirmCmd(
-          'سحب نقدي ${amount.toStringAsFixed(0)} ج من ${w.name}؟')) {
+          'سحب نقدي ${formatMoney(amount)} ج من ${w.name}؟')) {
         return;
       }
       final err = await budget.walletCashMovement(widget.groupId, w.id, amount,
           deposit: false, byName: user.name, byPhone: user.phone);
-      await done(err, 'تم سحب ${amount.toStringAsFixed(0)} ج من ${w.name}');
+      await done(err, 'تم سحب ${formatMoney(amount)} ج من ${w.name}');
       return;
     }
 
@@ -791,7 +791,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (from == null) return _snack('أضف محفظة نقدية لك أولًا من الإعدادات.');
       if (pw == null) return _snack('محفظة ${p.name} غير جاهزة بعد.');
       if (!await _confirmCmd(
-          'إضافة ${amount.toStringAsFixed(0)} ج إلى ${p.name} من ${from.name}؟')) {
+          'إضافة ${formatMoney(amount)} ج إلى ${p.name} من ${from.name}؟')) {
         return;
       }
       final err = await _db.transferBetweenWallets(widget.groupId,
@@ -800,14 +800,14 @@ class _ChatScreenState extends State<ChatScreen> {
           amount: amount,
           byName: user.name,
           byPhone: user.phone);
-      await done(err, 'تم إضافة ${amount.toStringAsFixed(0)} ج إلى ${p.name}',
+      await done(err, 'تم إضافة ${formatMoney(amount)} ج إلى ${p.name}',
           targets: [user.id, p.id]);
       return;
     }
     var w = walletByName(toHint, adminOnly: true);
     w ??= await _pickAnyWallet(title: 'تضيف الفلوس في أي محفظة؟', adminOnly: true);
     if (w == null || w == _walletSelectionCancelled) return;
-    if (!await _confirmCmd('إضافة ${amount.toStringAsFixed(0)} ج في ${w.name}؟')) {
+    if (!await _confirmCmd('إضافة ${formatMoney(amount)} ج في ${w.name}؟')) {
       return;
     }
     final err = await context
@@ -846,7 +846,7 @@ class _ChatScreenState extends State<ChatScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('قيمة المصروف: ${amount.toStringAsFixed(0)} ج'),
+            Text('قيمة المصروف: ${formatMoney(amount)} ج'),
             const SizedBox(height: 8),
             ...wallets.map(
               (wallet) => RadioListTile<WalletModel>(
@@ -855,7 +855,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 onChanged: (value) => Navigator.pop(ctx, value),
                 title: Text(wallet.name),
                 subtitle:
-                    Text('الرصيد: ${wallet.balance.toStringAsFixed(0)} ج'),
+                    Text('الرصيد: ${formatMoney(wallet.balance)} ج'),
               ),
             ),
           ],
@@ -919,7 +919,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 onChanged: (value) => Navigator.pop(ctx, value),
                 title: Text(wallet.name),
                 subtitle:
-                    Text('الرصيد: ${wallet.balance.toStringAsFixed(0)} ج'),
+                    Text('الرصيد: ${formatMoney(wallet.balance)} ج'),
               ),
             ),
           ],
@@ -976,7 +976,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _replyBanner() {
     final r = _replyTo!;
     final preview = r.type == MessageType.expense && r.amount != null
-        ? '${r.category ?? 'مصروف'}: ${r.amount!.toStringAsFixed(0)} ج'
+        ? '${r.category ?? 'مصروف'}: ${formatMoney(r.amount!)} ج'
         : r.content;
     return Container(
       color: AppTheme.systemMessage,
@@ -1070,9 +1070,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (categoryModels.isEmpty) return;
     final chosen = await pickCategory(context, categoryModels);
     if (chosen == null || !mounted) return;
+    final user = context.read<AuthProvider>().user;
+    if (user == null) return;
     await context
         .read<ChatProvider>()
-        .recategorizeExpense(widget.groupId, message, chosen.name);
+        .recategorizeExpense(widget.groupId, user, message, chosen.name);
     await context.read<BudgetProvider>().refreshData(widget.groupId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1434,11 +1436,8 @@ class _ChatScreenState extends State<ChatScreen> {
       final total = parsedItems
           .where((item) => item['isExpense'] == true)
           .fold<double>(0, (sum, item) => sum + (item['amount'] as double));
-      final totalText = total.truncateToDouble() == total
-          ? total.toStringAsFixed(0)
-          : total.toStringAsFixed(2);
       final preview =
-          'سيتم تسجيل ${parsedItems.length} مصروفات بإجمالي $totalText ج';
+          'سيتم تسجيل ${parsedItems.length} مصروفات بإجمالي ${formatMoney(total)} ج';
       if (_lastParsedPreview != preview) {
         setState(() => _lastParsedPreview = preview);
       }
@@ -1453,7 +1452,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final category = parsed['category'] as String;
     final isExpense = parsed['isExpense'] as bool;
     final label = isExpense ? 'سيتم تسجيل مصروف' : 'سيتم تسجيل دخل';
-    final preview = '$label: ${amount.toStringAsFixed(0)} ج — $category';
+    final preview = '$label: ${formatMoney(amount)} ج — $category';
     if (_lastParsedPreview != preview) {
       setState(() => _lastParsedPreview = preview);
     }
@@ -1531,7 +1530,7 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               Text(widget.groupName, style: const TextStyle(fontSize: 18)),
               Text(
-                '${user?.name ?? ''} • ${NumberFormat('#,###').format(visibleBalance)} ج',
+                '${user?.name ?? ''} • ${formatMoney(visibleBalance)} ج',
                 style: const TextStyle(fontSize: 13, color: Colors.white70),
               ),
               const Text(
@@ -1935,7 +1934,7 @@ class _SummaryItem extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          '${NumberFormat('#,###').format(amount)} ج',
+          '${formatMoney(amount)} ج',
           style: TextStyle(
               color: color, fontWeight: FontWeight.bold, fontSize: 15),
         ),

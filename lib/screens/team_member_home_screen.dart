@@ -17,6 +17,7 @@ import '../providers/chat_provider.dart';
 import '../providers/notification_provider.dart';
 import '../services/database_service.dart';
 import '../services/voice_service.dart';
+import '../utils/money_format.dart';
 import '../widgets/expense_confirm_dialog.dart';
 import '../widgets/wallet_ledger_table.dart';
 import 'notifications_screen.dart';
@@ -41,7 +42,6 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
   final _db = DatabaseService();
   final _voice = VoiceService();
   final _controller = TextEditingController();
-  final _money = NumberFormat('#,###');
   TeamModel? _team;
   WalletModel? _wallet;
   List<TransactionModel> _txns = const [];
@@ -197,7 +197,7 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
     final total = resolved.fold<double>(0, (sum, r) => sum + r.amount);
     final wallet = _wallet;
     if (wallet != null && total > wallet.balance + 0.005) {
-      _snack('الرصيد غير كافٍ في محفظتك. المتاح ${wallet.balance.toStringAsFixed(0)} ج.');
+      _snack('الرصيد غير كافٍ في محفظتك. المتاح ${formatMoney(wallet.balance)} ج.');
       return;
     }
 
@@ -435,6 +435,21 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
     final chosen = await pickCategory(context, categories);
     if (chosen == null || !mounted) return;
     await _db.recategorizeExpense(widget.groupId, txn.id, chosen.name);
+    // Same visibility as deleting an expense — money-record edits are
+    // never silent to the admin.
+    final user = context.read<AuthProvider>().user;
+    final admin = _admin;
+    if (user != null && admin != null) {
+      await _db.notifyMultiple(
+        widget.groupId,
+        title: 'تغيير نوع مصروف فريق ${_team?.name ?? ''}',
+        body:
+            '${user.name} غيّر نوع ${formatMoney(txn.amount)} ج من "${txn.category}" إلى "${chosen.name}"',
+        actorId: user.id,
+        actorName: user.name,
+        targetUserIds: [user.id, admin.id],
+      );
+    }
     _snack('تم تغيير النوع إلى "${chosen.name}"');
     await _load();
   }
@@ -457,7 +472,7 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
         widget.groupId,
         title: 'حذف مصروف فريق ${_team?.name ?? ''}',
         body:
-            '${user.name} حذف ${deleted.amount.toStringAsFixed(0)} ج — ${deleted.category}',
+            '${user.name} حذف ${formatMoney(deleted.amount)} ج — ${deleted.category}',
         actorId: user.id,
         actorName: user.name,
         targetUserIds: [user.id, admin.id],
@@ -571,7 +586,7 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
                   Text(
                     wallet == null
                         ? 'لا توجد محفظة بعد'
-                        : '${_money.format(wallet.balance)} ج',
+                        : '${formatMoney(wallet.balance)} ج',
                     style: TextStyle(
                       color: (wallet?.balance ?? 0) < 0
                           ? Colors.red.shade700
@@ -589,7 +604,7 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
                             style:
                                 TextStyle(color: Colors.black54, fontSize: 13)),
                         Text(
-                          '${_money.format(monthSpent)} / ${_money.format(limit)} ج',
+                          '${formatMoney(monthSpent)} / ${formatMoney(limit)} ج',
                           style: TextStyle(
                             color:
                                 overCap ? Colors.red.shade700 : Colors.black87,
@@ -815,7 +830,7 @@ class _TeamMemberHomeScreenState extends State<TeamMemberHomeScreen> {
                                     leading:
                                         const Icon(Icons.receipt_long_rounded),
                                     title: Text(
-                                        '${txn.category} - ${_money.format(txn.amount)} ج'),
+                                        '${txn.category} - ${formatMoney(txn.amount)} ج'),
                                     subtitle: Text(
                                       '${txn.userName}\n${DateFormat('yyyy/MM/dd - HH:mm').format(txn.date)}',
                                     ),

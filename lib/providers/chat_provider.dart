@@ -15,6 +15,7 @@ import '../services/database_service.dart';
 import '../services/ai_service.dart';
 import '../utils/category_utils.dart';
 import '../utils/expense_description.dart';
+import '../utils/money_format.dart';
 
 class ChatProvider extends ChangeNotifier {
   final DatabaseService _db = DatabaseService();
@@ -100,7 +101,7 @@ class ChatProvider extends ChangeNotifier {
       }
     } catch (_) {}
     if (wallet != null && totalExpense > wallet.balance + 0.005) {
-      return 'الرصيد غير كافٍ في محفظتك. المتاح ${wallet.balance.toStringAsFixed(0)} ج.';
+      return 'الرصيد غير كافٍ في محفظتك. المتاح ${formatMoney(wallet.balance)} ج.';
     }
     return commitResolvedExpenses(groupId, user, text, resolved,
         wallet: wallet, team: team);
@@ -259,7 +260,7 @@ class ChatProvider extends ChangeNotifier {
       final targetName = item.targetUserName ?? user.name;
       final title = item.isExpense ? 'مصروف جديد' : 'دخل جديد';
       final body =
-          '$targetName: ${item.amount.toStringAsFixed(0)} ج — ${item.category}';
+          '$targetName: ${formatMoney(item.amount)} ج — ${item.category}';
       await _db.addFamilyNotification(FamilyNotificationModel(
         id: _uuid.v4(),
         groupId: groupId,
@@ -276,7 +277,7 @@ class ChatProvider extends ChangeNotifier {
             .fold<double>(0.0, (sum, t) => sum + t.amount);
         await _sendSystemMessage(
           groupId,
-          '✅ تم حفظ المصروف في سجل الحسابات الحقيقي:\n${_formatResolvedText(item)}\nعدد العمليات المحفوظة الآن: ${savedTxns.length}\nإجمالي مصروفات الشهر: ${monthExpenses.toStringAsFixed(0)} ج',
+          '✅ تم حفظ المصروف في سجل الحسابات الحقيقي:\n${_formatResolvedText(item)}\nعدد العمليات المحفوظة الآن: ${savedTxns.length}\nإجمالي مصروفات الشهر: ${formatMoney(monthExpenses)} ج',
         );
       } catch (_) {
         await _sendSystemMessage(
@@ -298,7 +299,7 @@ class ChatProvider extends ChangeNotifier {
           items.where((r) => r.isExpense).fold<double>(0, (sum, r) => sum + r.amount);
       await _sendSystemMessage(
         groupId,
-        'تم تسجيل ${items.length} مصروفات بإجمالي ${total.toStringAsFixed(total.truncateToDouble() == total ? 0 : 2)} ج',
+        'تم تسجيل ${items.length} مصروفات بإجمالي ${formatMoney(total)} ج',
       );
     }
 
@@ -362,7 +363,7 @@ class ChatProvider extends ChangeNotifier {
       groupId: groupId,
       title: 'مصروف فريق ${team.name}',
       body:
-          '${user.name}: ${total.toStringAsFixed(0)} ج في $savedCount بند. اضغط على الفرق لمراجعة التفاصيل.',
+          '${user.name}: ${formatMoney(total)} ج في $savedCount بند. اضغط على الفرق لمراجعة التفاصيل.',
       actorId: user.id,
       actorName: user.name,
       timestamp: DateTime.now(),
@@ -375,10 +376,7 @@ class ChatProvider extends ChangeNotifier {
 
   String _formatResolvedText(ResolvedExpense item) {
     final prefix = item.isExpense ? 'مصروف' : 'دخل';
-    final amountText = item.amount.truncateToDouble() == item.amount
-        ? item.amount.toStringAsFixed(0)
-        : item.amount.toStringAsFixed(2);
-    return '$prefix $amountText ج — ${item.category}';
+    return '$prefix ${formatMoney(item.amount)} ج — ${item.category}';
   }
 
   @override
@@ -391,7 +389,7 @@ class ChatProvider extends ChangeNotifier {
   /// Short snippet of the message being replied to, shown in the reply quote.
   String _replyPreview(ChatMessage m) {
     if (m.type == MessageType.expense && m.amount != null) {
-      return '${m.category ?? 'مصروف'}: ${m.amount!.toStringAsFixed(0)} ج';
+      return '${m.category ?? 'مصروف'}: ${formatMoney(m.amount!)} ج';
     }
     final c = m.content.trim();
     return c.length > 80 ? '${c.substring(0, 80)}…' : c;
@@ -524,8 +522,8 @@ class ChatProvider extends ChangeNotifier {
       );
       await _sendSystemMessage(
         groupId,
-        '💰 إيداع نقدي: ${amount.toStringAsFixed(0)} ج في ${wallet.name}.\n'
-        'رصيد المحفظة الآن: ${newBalance.toStringAsFixed(0)} ج.',
+        '💰 إيداع نقدي: ${formatMoney(amount)} ج في ${wallet.name}.\n'
+        'رصيد المحفظة الآن: ${formatMoney(newBalance)} ج.',
       );
       await refreshMessages(groupId);
       return null;
@@ -553,7 +551,7 @@ class ChatProvider extends ChangeNotifier {
         : ' — بواسطة ${w.updatedByLabel}';
     await _sendSystemMessage(
       groupId,
-      '👛 رصيد ${w.name}: ${w.balance.toStringAsFixed(0)} ج$updated$by',
+      '👛 رصيد ${w.name}: ${formatMoney(w.balance)} ج$updated$by',
       targetUserId: requesterId,
     );
     await refreshMessages(groupId);
@@ -579,12 +577,12 @@ class ChatProvider extends ChangeNotifier {
     for (final e in recent) {
       final sign = e.isDebit ? '+' : '-';
       lines.add(
-          '${df.format(e.at)} | ${_entryStatementLabel(e)} | $sign${e.amount.toStringAsFixed(0)} | رصيد ${e.balanceAfter.toStringAsFixed(0)}');
+          '${df.format(e.at)} | ${_entryStatementLabel(e)} | $sign${formatMoney(e.amount)} | رصيد ${formatMoney(e.balanceAfter)}');
     }
     if (entries.length > recent.length) {
       lines.add('… الباقي في شاشة المحافظ بالإعدادات.');
     }
-    lines.add('الرصيد الحالي: ${current.toStringAsFixed(0)} ج');
+    lines.add('الرصيد الحالي: ${formatMoney(current)} ج');
     await _sendSystemMessage(groupId, lines.join('\n'),
         targetUserId: requesterId);
     await refreshMessages(groupId);
@@ -614,11 +612,24 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Corrects an expense's category and teaches the parser from it (offline).
+  /// Notifies the family — same visibility as deleting an expense, so edits
+  /// to money records are never silent.
   Future<void> recategorizeExpense(
-      String groupId, ChatMessage message, String category) async {
+      String groupId, UserModel user, ChatMessage message, String category) async {
     final txId = message.transactionId;
     if (txId == null || txId.isEmpty) return;
     await _db.recategorizeExpense(groupId, txId, category);
+    final amount = message.amount ?? 0;
+    await _db.addFamilyNotification(FamilyNotificationModel(
+      id: _uuid.v4(),
+      groupId: groupId,
+      title: 'تغيير نوع مصروف',
+      body:
+          '${user.name} غيّر نوع ${formatMoney(amount)} ج من "${message.category ?? ''}" إلى "$category"',
+      actorId: user.id,
+      actorName: user.name,
+      timestamp: DateTime.now(),
+    ));
     _messages = await _db.getMessagesSync(groupId);
     notifyListeners();
   }
@@ -649,14 +660,14 @@ class ChatProvider extends ChangeNotifier {
       groupId: groupId,
       title: deleted.isExpense ? 'حذف مصروف' : 'حذف دخل',
       body:
-          '${user.name} حذف ${deleted.amount.toStringAsFixed(0)} ج — ${deleted.category}',
+          '${user.name} حذف ${formatMoney(deleted.amount)} ج — ${deleted.category}',
       actorId: user.id,
       actorName: user.name,
       timestamp: DateTime.now(),
     ));
     await _sendSystemMessage(
       groupId,
-      '🗑️ تم حذف الإدخال وإرجاع أثره إلى الميزانية: ${deleted.amount.toStringAsFixed(0)} ج — ${deleted.category}',
+      '🗑️ تم حذف الإدخال وإرجاع أثره إلى الميزانية: ${formatMoney(deleted.amount)} ج — ${deleted.category}',
     );
     _messages = await _db.getMessagesSync(groupId);
     notifyListeners();

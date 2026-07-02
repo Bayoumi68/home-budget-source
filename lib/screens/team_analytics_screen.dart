@@ -8,6 +8,7 @@ import '../models/transaction_model.dart';
 import '../models/wallet_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/database_service.dart';
+import '../utils/money_format.dart';
 import '../utils/period_utils.dart';
 
 /// My own team report — same page shape as a regular (non-admin) family
@@ -34,7 +35,6 @@ class TeamAnalyticsScreen extends StatefulWidget {
 
 class _TeamAnalyticsScreenState extends State<TeamAnalyticsScreen> {
   final _db = DatabaseService();
-  final _money = NumberFormat('#,###');
   // Default to full history, matching the wallet ledger card (which is never
   // period-filtered) — a 'month' default silently hid real data with no
   // indicator why, reading as a bug.
@@ -177,14 +177,12 @@ class _TeamAnalyticsScreenState extends State<TeamAnalyticsScreen> {
           title: 'مصروفاتي',
           amount: expenses,
           color: AppTheme.expenseRed,
-          icon: Icons.trending_down_rounded,
-          money: _money),
+          icon: Icons.trending_down_rounded),
       _SummaryCard(
           title: 'رصيدي الحالي',
           amount: balance,
           color: AppTheme.incomeGreen,
-          icon: Icons.account_balance_wallet_rounded,
-          money: _money),
+          icon: Icons.account_balance_wallet_rounded),
     ];
     return Row(
       children: cards
@@ -225,7 +223,7 @@ class _TeamAnalyticsScreenState extends State<TeamAnalyticsScreen> {
                 color: AppTheme.accentTeal,
                 backgroundColor: Colors.grey.shade200,
               ),
-              trailing: Text('${_money.format(e.value)} ج\n${pct.toStringAsFixed(0)}%',
+              trailing: Text('${formatMoney(e.value)} ج\n${pct.toStringAsFixed(0)}%',
                   textAlign: TextAlign.end,
                   style: const TextStyle(
                       fontWeight: FontWeight.bold, color: AppTheme.expenseRed)),
@@ -346,13 +344,11 @@ class _SummaryCard extends StatelessWidget {
   final double amount;
   final Color color;
   final IconData icon;
-  final NumberFormat money;
   const _SummaryCard(
       {required this.title,
       required this.amount,
       required this.color,
-      required this.icon,
-      required this.money});
+      required this.icon});
 
   @override
   Widget build(BuildContext context) {
@@ -364,7 +360,7 @@ class _SummaryCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(title, style: const TextStyle(fontSize: 12, color: Colors.grey)),
           const SizedBox(height: 4),
-          Text('${money.format(amount)} ج',
+          Text('${formatMoney(amount)} ج',
               style: TextStyle(
                   fontSize: 16, fontWeight: FontWeight.bold, color: color)),
         ]),

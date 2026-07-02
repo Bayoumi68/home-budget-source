@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:intl/intl.dart';
 import '../config/theme.dart';
 import '../config/constants.dart';
 import '../models/user_model.dart';
@@ -11,6 +10,7 @@ import '../providers/auth_provider.dart';
 import '../providers/avatar_provider.dart';
 import '../services/database_service.dart';
 import '../services/auth_service.dart';
+import '../utils/money_format.dart';
 import 'member_detail_screen.dart';
 
 class MembersScreen extends StatefulWidget {
@@ -152,7 +152,7 @@ class _MembersScreenState extends State<MembersScreen> {
                             const SizedBox(height: 4),
                             Text(
                               member.monthlyLimit > 0
-                                  ? 'حد شهري: ${NumberFormat('#,###').format(member.monthlyLimit)} ج — صرف: ${NumberFormat('#,###').format(member.currentSpending)} ج'
+                                  ? 'حد شهري: ${formatMoney(member.monthlyLimit)} ج — صرف: ${formatMoney(member.currentSpending)} ج'
                                   : 'لا يوجد حد شهري',
                             ),
                             if (member.monthlyLimit > 0) ...[
@@ -483,7 +483,9 @@ class _MembersScreenState extends State<MembersScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('حذف عضو'),
-        content: const Text('هل أنت متأكد من حذف هذا العضو؟'),
+        content: const Text(
+            'سيتم حذف العضو وأرشفة محفظته (يُرفض الحذف إذا كان بها رصيد — '
+            'اسحبه أولًا). هل أنت متأكد؟'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -495,7 +497,12 @@ class _MembersScreenState extends State<MembersScreen> {
       ),
     );
     if (confirmed == true) {
-      await _db.removeMember(widget.groupId, userId);
+      final err = await _db.removeFamilyMember(widget.groupId, userId);
+      if (err != null && mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(err)));
+        return;
+      }
       await _loadMembers();
     }
   }

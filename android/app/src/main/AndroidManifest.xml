@@ -43,6 +43,14 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
+
+        <!-- Google Mobile Ads (AdMob) app id. THIS IS GOOGLE'S OFFICIAL TEST
+             APP ID — safe for development, serves test ads only. Before real
+             revenue: create an AdMob account, register this app, and replace
+             this value AND AppConstants.adMobBannerUnitId with your own ids. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713"/>
     </application>
 
     <queries>

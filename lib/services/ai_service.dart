@@ -617,17 +617,6 @@ class AIService {
     'العائلة',
   };
 
-  static String formatExpenseText(Map<String, dynamic> result) {
-    final amount = result['amount'] as double;
-    final category = result['category'] as String;
-    final isExpense = result['isExpense'] as bool;
-    final prefix = isExpense ? 'مصروف' : 'دخل';
-    final amountText = amount.truncateToDouble() == amount
-        ? amount.toStringAsFixed(0)
-        : amount.toStringAsFixed(2);
-    return '$prefix $amountText ج - $category';
-  }
-
   static const _numberWords = <String, double>{
     'واحد': 1,
     'واحده': 1,

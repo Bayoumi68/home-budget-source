@@ -14,6 +14,7 @@ import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
+import '../utils/money_format.dart';
 import '../utils/category_utils.dart';
 import 'learned_keywords_screen.dart';
 
@@ -361,8 +362,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         );
     if (!mounted) return;
     final successMsg = withdraw
-        ? 'تم سحب ${amount.toStringAsFixed(0)} ج من ${wallet.name}'
-        : 'تم إيداع ${amount.toStringAsFixed(0)} ج في ${wallet.name}';
+        ? 'تم سحب ${formatMoney(amount)} ج من ${wallet.name}'
+        : 'تم إيداع ${formatMoney(amount)} ج في ${wallet.name}';
     // A plain admin cash wallet has no owner to notify — only a member wallet
     // (fund/withdraw on someone's own pocket) has a counterparty.
     if (error == null && user != null && wallet.isMemberWallet && (wallet.ownerId ?? '').isNotEmpty) {
@@ -448,7 +449,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                     .map((w) => DropdownMenuItem(
                           value: w,
                           child: Text(
-                              '${w.name} (${w.balance.toStringAsFixed(0)} ج)'),
+                              '${w.name} (${formatMoney(w.balance)} ج)'),
                         ))
                     .toList(),
                 onChanged: (v) => setDialog(() => source = v ?? source),
@@ -498,8 +499,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
         );
     if (!mounted) return;
     final successMsg = withdraw
-        ? 'تم سحب ${amount.toStringAsFixed(0)} ج من ${memberWallet.name}'
-        : 'تم تمويل ${memberWallet.name} بـ ${amount.toStringAsFixed(0)} ج';
+        ? 'تم سحب ${formatMoney(amount)} ج من ${memberWallet.name}'
+        : 'تم تمويل ${memberWallet.name} بـ ${formatMoney(amount)} ج';
     if (error == null && user != null && (memberWallet.ownerId ?? '').isNotEmpty) {
       await _db.notifyMultiple(
         widget.groupId,
@@ -1090,8 +1091,8 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
             final percent =
                 limit > 0 ? (spent / limit).clamp(0.0, 1.0).toDouble() : 0.0;
             final remainingText = remaining >= 0
-                ? 'المتبقي ${remaining.toStringAsFixed(0)} ج'
-                : 'تجاوزت الحد بـ ${remaining.abs().toStringAsFixed(0)} ج';
+                ? 'المتبقي ${formatMoney(remaining)} ج'
+                : 'تجاوزت الحد بـ ${formatMoney(remaining.abs())} ج';
             return Card(
               child: ListTile(
                 leading: Text(budget.categories.iconFor(cat),
@@ -1102,7 +1103,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                              'حد $periodLabel ${limit.toStringAsFixed(0)} ج — المصروف في نفس الفترة ${spent.toStringAsFixed(0)} ج'),
+                              'حد $periodLabel ${formatMoney(limit)} ج — المصروف في نفس الفترة ${formatMoney(spent)} ج'),
                           Text(
                             remainingText,
                             style: TextStyle(
@@ -1122,7 +1123,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                         ],
                       )
                     : Text(
-                        'لا يوجد حد محدد — مصروف الشهر ${spent.toStringAsFixed(0)} ج'),
+                        'لا يوجد حد محدد — مصروف الشهر ${formatMoney(spent)} ج'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1337,7 +1338,6 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
 
   Widget _walletLine(BuildContext context, BudgetProvider budget, WalletModel w,
       {bool showManage = false, bool showFunding = false}) {
-    final fmt = NumberFormat('#,##0');
     final hasButtons = showManage || showFunding;
     final expanded = _expandedWallets.contains(w.id);
     // Spending this month from this wallet, vs its guide limit (red flag only).
@@ -1379,14 +1379,14 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                       Text(w.name,
                           style: const TextStyle(fontWeight: FontWeight.w600)),
                       Text(
-                        'الرصيد: ${fmt.format(w.balance)} ج'
+                        'الرصيد: ${formatMoney(w.balance)} ج'
                         '${w.description.isEmpty ? '' : ' — ${w.description}'}',
                         style:
                             const TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                       if (w.limit > 0)
                         Text(
-                          'الحد: ${fmt.format(w.limit)} ج — صرف الشهر ${fmt.format(spent)} ج'
+                          'الحد: ${formatMoney(w.limit)} ج — صرف الشهر ${formatMoney(spent)} ج'
                           '${overLimit ? ' ⚠ تجاوز الحد' : ''}',
                           style: TextStyle(
                             fontSize: 12,
@@ -1515,14 +1515,14 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                         DataCell(Text(dt.format(e.at))),
                         DataCell(Text(_entryStatement(e))),
                         DataCell(Text(
-                          e.isDebit ? fmt.format(e.amount) : '—',
+                          e.isDebit ? formatMoney(e.amount) : '—',
                           style: const TextStyle(color: AppTheme.incomeGreen),
                         )),
                         DataCell(Text(
-                          !e.isDebit ? fmt.format(e.amount) : '—',
+                          !e.isDebit ? formatMoney(e.amount) : '—',
                           style: const TextStyle(color: AppTheme.expenseRed),
                         )),
-                        DataCell(Text(fmt.format(e.balanceAfter))),
+                        DataCell(Text(formatMoney(e.balanceAfter))),
                         DataCell(Text(e.byLabel)),
                       ]),
                     )

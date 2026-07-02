@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../models/category_model.dart';
 import '../models/resolved_expense.dart';
+import '../utils/money_format.dart';
 
 /// One category-picker UI, reused by both the long-press "تغيير النوع" flow
 /// and the mandatory pre-send confirm dialog below — shared across the main
@@ -45,9 +46,7 @@ Future<List<ResolvedExpense>?> confirmResolvedExpenses(
         final total = draft
             .where((r) => r.isExpense)
             .fold<double>(0, (sum, r) => sum + r.amount);
-        final totalText = total.truncateToDouble() == total
-            ? total.toStringAsFixed(0)
-            : total.toStringAsFixed(2);
+        final totalText = formatMoney(total);
         return AlertDialog(
           title: Text(
               draft.length > 1 ? 'تأكيد ${draft.length} مصروفات' : 'تأكيد المصروف'),
@@ -98,9 +97,7 @@ Future<List<ResolvedExpense>?> confirmResolvedExpenses(
 
 Widget _resolvedExpenseTile(ResolvedExpense item,
     {required VoidCallback onChangeCategory}) {
-  final amountText = item.amount.truncateToDouble() == item.amount
-      ? item.amount.toStringAsFixed(0)
-      : item.amount.toStringAsFixed(2);
+  final amountText = formatMoney(item.amount);
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [

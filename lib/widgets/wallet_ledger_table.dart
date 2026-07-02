@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../config/theme.dart';
 import '../models/wallet_entry_model.dart';
+import '../utils/money_format.dart';
 
 /// The wallet-ledger DataTable (date/statement/in/out/balance/by whom) shared
 /// across every screen that shows a wallet's movement — family Settings, the
 /// wallets overview screen, and the admin's per-worker team view.
 Widget buildWalletLedgerTable(List<WalletEntryModel> entriesOldestFirst) {
-  final fmt = NumberFormat('#,##0');
   final entries = entriesOldestFirst.reversed.toList(); // newest first
   if (entries.isEmpty) {
     return const Padding(
@@ -36,14 +36,14 @@ Widget buildWalletLedgerTable(List<WalletEntryModel> entriesOldestFirst) {
                 DataCell(Text(dt.format(e.at))),
                 DataCell(Text(walletEntryStatement(e))),
                 DataCell(Text(
-                  e.isDebit ? fmt.format(e.amount) : '—',
+                  e.isDebit ? formatMoney(e.amount) : '—',
                   style: const TextStyle(color: AppTheme.incomeGreen),
                 )),
                 DataCell(Text(
-                  !e.isDebit ? fmt.format(e.amount) : '—',
+                  !e.isDebit ? formatMoney(e.amount) : '—',
                   style: const TextStyle(color: AppTheme.expenseRed),
                 )),
-                DataCell(Text(fmt.format(e.balanceAfter))),
+                DataCell(Text(formatMoney(e.balanceAfter))),
                 DataCell(Text(e.byLabel)),
               ]))
           .toList(),
