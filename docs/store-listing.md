@@ -29,7 +29,7 @@ Home Budgets تطبيق بسيط لإدارة ميزانية العائلة وا
 
 المميّزات:
 • تسجيل المصروفات بالصوت أو المحادثة بالعربية — بدون قوائم معقّدة.
-• يعمل بدون إنترنت: يفهم مصروفاتك ويحفظها ويزامنها عند عودة الاتصال.
+• يفهم مصروفاتك على الجهاز مباشرةً، ولا تفقدها لو ضعُف الإنترنت: تُحفظ وتُزامَن تلقائيًا عند عودة الاتصال.
 • محافظ لكل فرد: يموّل قائد العائلة كل محفظة ويتابع الرصيد والحركة.
 • حدود شهرية لكل عضو مع تنبيه عند تجاوز الحد.
 • وضع الفريق: أدِر العمّال بمحافظهم الخاصة ومحادثة فريق مستقلّة.
@@ -48,7 +48,8 @@ does the rest. Home Budgets is a simple family and team budgeting app that anyon
 
 Features:
 • Add expenses by voice or chat — no complicated forms.
-• Works offline: it understands, saves, and syncs your spending when you reconnect.
+• Understands your expenses on-device, and you won't lose them if the connection drops: they're
+  saved and synced automatically when you're back online.
 • A wallet for each member: the family admin funds each wallet and tracks the balance and history.
 • Monthly limits per member, with an alert when someone goes over.
 • Team mode: manage workers with their own wallets and a separate team chat.
