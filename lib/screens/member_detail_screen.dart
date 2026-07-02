@@ -56,12 +56,9 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
     super.dispose();
   }
 
-  Future<void> _toggleMic() async {
-    if (_isRecording) {
-      await _voice.stopListening();
-      if (mounted) setState(() => _isRecording = false);
-      return;
-    }
+  // Press-and-hold mic: hold to dictate, release to stop.
+  Future<void> _startMic() async {
+    if (_isRecording) return;
     final ok = await _voice.initialize(onError: (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -75,6 +72,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
       }
       return;
     }
+    _msgController.clear();
     if (mounted) setState(() => _isRecording = true);
     await _voice.startListening(
       (result, isFinal) {
@@ -91,6 +89,11 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
         }
       },
     );
+  }
+
+  Future<void> _stopMic() async {
+    await _voice.stopListening();
+    if (mounted) setState(() => _isRecording = false);
   }
 
   Future<void> _load() async {
@@ -519,16 +522,21 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      IconButton(
-                        onPressed: _busy ? null : _toggleMic,
-                        tooltip: _isRecording ? 'إيقاف' : 'تحدّث',
-                        icon: Icon(
-                          _isRecording
-                              ? Icons.stop_circle_rounded
-                              : Icons.mic_rounded,
-                          color: _isRecording
-                              ? Colors.red
-                              : AppTheme.primaryGreen,
+                      Listener(
+                        onPointerDown:
+                            _busy ? null : (_) => _startMic(),
+                        onPointerUp: (_) => _stopMic(),
+                        onPointerCancel: (_) => _stopMic(),
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Icon(
+                            _isRecording
+                                ? Icons.mic_rounded
+                                : Icons.mic_none_rounded,
+                            color: _isRecording
+                                ? Colors.red
+                                : AppTheme.primaryGreen,
+                          ),
                         ),
                       ),
                       Expanded(

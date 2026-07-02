@@ -6,7 +6,10 @@ import '../config/theme.dart';
 class MessageInput extends StatelessWidget {
   final TextEditingController controller;
   final VoidCallback onSend;
-  final VoidCallback onMic;
+  // Press-and-hold mic: hold to record, release to stop (dictation fills the
+  // box, then the user reviews and taps send).
+  final VoidCallback onMicStart;
+  final VoidCallback onMicStop;
   final ValueChanged<String>? onChanged;
   final bool isRecording;
   final bool isSending;
@@ -16,7 +19,8 @@ class MessageInput extends StatelessWidget {
     super.key,
     required this.controller,
     required this.onSend,
-    required this.onMic,
+    required this.onMicStart,
+    required this.onMicStop,
     this.onChanged,
     this.isRecording = false,
     this.isSending = false,
@@ -40,8 +44,12 @@ class MessageInput extends StatelessWidget {
       child: SafeArea(
         child: Row(
           children: [
-            GestureDetector(
-              onTap: enabled && !isSending ? onMic : null,
+            Listener(
+              onPointerDown: enabled && !isSending
+                  ? (_) => onMicStart()
+                  : null,
+              onPointerUp: (_) => onMicStop(),
+              onPointerCancel: (_) => onMicStop(),
               child: Container(
                 width: 44,
                 height: 44,
@@ -50,7 +58,7 @@ class MessageInput extends StatelessWidget {
                   color: isRecording ? AppTheme.expenseRed : Colors.transparent,
                 ),
                 child: Icon(
-                  isRecording ? Icons.stop_rounded : Icons.mic_rounded,
+                  isRecording ? Icons.mic_rounded : Icons.mic_none_rounded,
                   color: isRecording
                       ? Colors.white
                       : enabled
@@ -81,9 +89,9 @@ class MessageInput extends StatelessWidget {
                   onChanged: onChanged,
                   decoration: InputDecoration(
                     hintText: isRecording
-                        ? 'جاري الاستماع... اضغط الميكروفون مرة أخرى عند الانتهاء'
+                        ? 'جارِ الاستماع... أفلت الميكروفون عند الانتهاء'
                         : enabled
-                            ? 'اكتب الرسالة ثم أرسل بالسهم'
+                            ? 'اكتب، أو اضغط مطوّلًا على الميكروفون وتحدّث'
                             : 'صلاحية تسجيل المصاريف غير مفعلة لك',
                     hintTextDirection: ui.TextDirection.rtl,
                     border: InputBorder.none,

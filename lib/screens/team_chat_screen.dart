@@ -72,14 +72,10 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  // One-way dictate-only mic, matching the family chat's mic behavior exactly:
-  // tap to start, live text fills the box, tap again to stop, user taps send.
-  Future<void> _toggleMic() async {
-    if (_isRecording) {
-      await _voice.stopListening();
-      if (mounted) setState(() => _isRecording = false);
-      return;
-    }
+  // Press-and-hold dictate-only mic: hold to record (live text fills the box),
+  // release to stop, then the user taps send. The mic never sends by itself.
+  Future<void> _startMic() async {
+    if (_isRecording) return;
     final ok = await _voice.initialize(
       onError: (e) => _snack('مشكلة في الميكروفون: $e'),
     );
@@ -87,6 +83,7 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
       _snack(_voice.lastError ?? 'الميكروفون غير متاح أو لم يُمنح الإذن.');
       return;
     }
+    _controller.clear();
     if (mounted) setState(() => _isRecording = true);
     await _voice.startListening(
       (result, isFinal) {
@@ -106,6 +103,11 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
         }
       },
     );
+  }
+
+  Future<void> _stopMic() async {
+    await _voice.stopListening();
+    if (mounted) setState(() => _isRecording = false);
   }
 
   Future<void> _send() async {
@@ -243,7 +245,8 @@ class _TeamChatScreenState extends State<TeamChatScreen> {
           MessageInput(
             controller: _controller,
             onSend: _send,
-            onMic: () => unawaited(_toggleMic()),
+            onMicStart: () => unawaited(_startMic()),
+            onMicStop: () => unawaited(_stopMic()),
             isRecording: _isRecording,
             isSending: _isSending,
           ),

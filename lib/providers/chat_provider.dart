@@ -349,6 +349,33 @@ class ChatProvider extends ChangeNotifier {
         byName: user.name,
         byPhone: user.phone,
       );
+      // Post an expense bubble into the team chat feed so it shows on the
+      // worker's (chat-first) home screen, exactly like a family expense shows
+      // in the family feed. notify:false — the summary notification below
+      // covers the whole batch, so bubbles must not double-notify.
+      await _db.sendTeamChatMessage(
+        groupId,
+        team.id,
+        ChatMessage(
+          id: _uuid.v4(),
+          groupId: groupId,
+          senderId: user.id,
+          senderName: user.name,
+          senderAvatar: user.photoUrl,
+          type: MessageType.expense,
+          content: buildExpenseBubbleContent(
+            isExpense: true,
+            amount: item.amount,
+            rawText: item.note,
+          ),
+          amount: item.amount,
+          category: item.category,
+          transactionId: transactionId,
+          timestamp: DateTime.now(),
+          overCap: item.overCap,
+        ),
+        notify: false,
+      );
       savedCount++;
       total += item.amount;
     }
@@ -368,6 +395,7 @@ class ChatProvider extends ChangeNotifier {
       actorName: user.name,
       timestamp: DateTime.now(),
       targetUserIds: recipients,
+      teamId: team.id,
     ));
 
     notifyListeners();
@@ -484,6 +512,7 @@ class ChatProvider extends ChangeNotifier {
         replyToSender: replyTo?.senderName,
         replyToText: replyTo == null ? null : _replyPreview(replyTo),
       ));
+      await _notifyChatRecipients(groupId, user, text, targetUserId);
       try {
         _messages = await _db.getMessagesSync(groupId);
       } catch (_) {}
@@ -492,6 +521,41 @@ class ChatProvider extends ChangeNotifier {
     }
     return commitResolvedExpenses(groupId, user, text, resolved,
         wallet: wallet, team: team, targetUserId: targetUserId, replyTo: replyTo);
+  }
+
+  /// Notify the other party of a plain chat message so their bell lights up
+  /// (chat was previously silent — only money actions notified). Targets the
+  /// directed recipient if any; otherwise a member's message goes to the
+  /// admin, and an admin's untargeted message goes to every family member.
+  Future<void> _notifyChatRecipients(
+      String groupId, UserModel user, String text, String? targetUserId) async {
+    try {
+      final recipients = <String>[];
+      if (targetUserId != null && targetUserId.trim().isNotEmpty) {
+        recipients.add(targetUserId);
+      } else if (!user.isAdmin) {
+        final group = await _db.getGroupById(groupId);
+        final adminId = group?.adminId ?? '';
+        if (adminId.isNotEmpty) recipients.add(adminId);
+      } else {
+        final members = await _db.getFamilyMembersSync(groupId);
+        recipients.addAll(
+            members.where((m) => !m.isAdmin).map((m) => m.id));
+      }
+      if (recipients.isEmpty) return;
+      final snippet =
+          text.trim().length > 80 ? '${text.trim().substring(0, 80)}…' : text.trim();
+      await _db.notifyMultiple(
+        groupId,
+        title: 'رسالة من ${user.name}',
+        body: snippet,
+        actorId: user.id,
+        actorName: user.name,
+        targetUserIds: recipients,
+      );
+    } catch (_) {
+      // A failed notification must never block sending the message itself.
+    }
   }
 
   /// Cash into a wallet (a top-up): DR the wallet ledger and update its

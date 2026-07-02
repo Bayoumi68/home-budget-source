@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../config/theme.dart';
+import '../models/family_notification_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/notification_provider.dart';
+import '../services/database_service.dart';
+import 'team_chat_screen.dart';
 
 class NotificationsScreen extends StatefulWidget {
   final String groupId;
@@ -14,6 +17,32 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  final _db = DatabaseService();
+
+  /// Tapping a notification jumps to where the event lives — its chat feed
+  /// (both chat messages and expense bubbles live there). A team event opens
+  /// that team's chat; a family event (or your own team's) just returns to the
+  /// screen the bell was opened from, which already IS that chat.
+  Future<void> _openEvent(FamilyNotificationModel item) async {
+    final auth = context.read<AuthProvider>();
+    final nav = Navigator.of(context);
+    final teamId = item.teamId;
+    if (teamId != null && teamId.isNotEmpty && auth.teamId != teamId) {
+      final team = await _db.getTeamById(widget.groupId, teamId);
+      if (team != null) {
+        nav.push(MaterialPageRoute(
+          builder: (_) => TeamChatScreen(
+            groupId: widget.groupId,
+            teamId: team.id,
+            teamName: team.name,
+          ),
+        ));
+        return;
+      }
+    }
+    nav.pop();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -67,14 +96,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 final item = items[index];
                 final read =
                     userId == null ? item.read : item.isReadFor(userId);
+                final isChat = item.title.contains('رسالة');
                 return ListTile(
                   leading: CircleAvatar(
                     backgroundColor:
                         read ? Colors.grey.shade300 : AppTheme.accentTeal,
                     child: Icon(
-                      item.title.contains('دخل')
-                          ? Icons.trending_up_rounded
-                          : Icons.payments_rounded,
+                      isChat
+                          ? Icons.chat_bubble_rounded
+                          : (item.title.contains('دخل')
+                              ? Icons.trending_up_rounded
+                              : Icons.payments_rounded),
                       color: read ? Colors.grey.shade700 : Colors.white,
                     ),
                   ),
@@ -83,6 +115,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   subtitle: Text(
                       '${item.body}\n${DateFormat('yyyy/MM/dd - HH:mm').format(item.timestamp)}'),
                   isThreeLine: true,
+                  trailing: const Icon(Icons.chevron_left_rounded,
+                      color: Colors.grey),
+                  onTap: () => _openEvent(item),
                 );
               },
               separatorBuilder: (_, __) => const Divider(height: 1),

@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/user_model.dart';
@@ -199,29 +201,24 @@ class DatabaseService {
   }
 
   // ─── In-app update notice ───
-  // A single shared pointer (appConfig/latest) records the newest build anyone
-  // in the family has run. On launch each device compares its own build:
-  //   • newer than (or no) recorded → self-publish this build as the latest,
-  //   • older → an update is available (returns the latest version string).
-  // This needs no manual deploy step: the first device on a new build (e.g. the
-  // freshly-deployed web app) publishes it, and everyone else is then prompted.
+  // The DEPLOYED build is published as a public static file on Firebase
+  // Hosting (version.json, written at deploy time). Every device — web or APK
+  // — fetches it and compares to its own build. This reflects what's actually
+  // deployed the moment it ships (no auth, and no chicken-and-egg where the
+  // build stayed invisible until some device happened to run it). Returns the
+  // newer version string when an update is available, else null.
   Future<String?> checkForUpdate() async {
     try {
-      final ref = _fs.collection('appConfig').doc('latest');
-      final snap = await ref.get();
-      final data = snap.data();
-      final latestBuild = (data?['build'] as num?)?.toInt() ?? 0;
-      if (AppConstants.appBuild >= latestBuild) {
-        if (AppConstants.appBuild > latestBuild) {
-          await ref.set({
-            'version': AppConstants.appVersion,
-            'build': AppConstants.appBuild,
-            'updatedAt': DateTime.now().toIso8601String(),
-          });
-        }
-        return null; // we are the latest
-      }
-      return (data?['version'] ?? 'نسخة جديدة').toString();
+      final url =
+          '${AppConstants.appWebLink}/version.json?t=${DateTime.now().millisecondsSinceEpoch}';
+      final res = await http
+          .get(Uri.parse(url))
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return null;
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final latestBuild = (data['build'] as num?)?.toInt() ?? 0;
+      if (AppConstants.appBuild >= latestBuild) return null;
+      return (data['version'] ?? 'نسخة جديدة').toString();
     } catch (_) {
       return null;
     }
@@ -1436,20 +1433,29 @@ class DatabaseService {
   }
 
   // ─── Messages ───
+  /// Map a message doc to a ChatMessage, deriving its delivery status from
+  /// Firestore write metadata: a doc still pending a server write is only
+  /// "sent" (✓); once the server has acknowledged it, it's "delivered" (✓✓).
+  ChatMessage _chatFromDoc(QueryDocumentSnapshot<Map<String, dynamic>> d) {
+    final status =
+        d.metadata.hasPendingWrites ? MessageStatus.sent : MessageStatus.delivered;
+    return ChatMessage.fromMap({...d.data(), 'status': status.name});
+  }
+
   Future<List<ChatMessage>> getMessagesSync(String groupId) async {
     final q = await _messages(groupId)
         .orderBy('timestamp', descending: true)
         .limit(200)
         .get();
-    return q.docs.map((d) => ChatMessage.fromMap(d.data())).toList();
+    return q.docs.map(_chatFromDoc).toList();
   }
 
   Stream<List<ChatMessage>> watchMessages(String groupId) {
     return _messages(groupId)
         .orderBy('timestamp', descending: true)
         .limit(200)
-        .snapshots()
-        .map((q) => q.docs.map((d) => ChatMessage.fromMap(d.data())).toList());
+        .snapshots(includeMetadataChanges: true)
+        .map((q) => q.docs.map(_chatFromDoc).toList());
   }
 
   Future<void> sendMessage(ChatMessage message) async {
@@ -1486,7 +1492,7 @@ class DatabaseService {
         .orderBy('timestamp', descending: true)
         .limit(200)
         .get();
-    return q.docs.map((d) => ChatMessage.fromMap(d.data())).toList();
+    return q.docs.map(_chatFromDoc).toList();
   }
 
   Stream<List<ChatMessage>> watchTeamChatMessages(
@@ -1494,13 +1500,69 @@ class DatabaseService {
     return _teamMessages(groupId, teamId)
         .orderBy('timestamp', descending: true)
         .limit(200)
-        .snapshots()
-        .map((q) => q.docs.map((d) => ChatMessage.fromMap(d.data())).toList());
+        .snapshots(includeMetadataChanges: true)
+        .map((q) => q.docs.map(_chatFromDoc).toList());
   }
 
   Future<void> sendTeamChatMessage(
-      String groupId, String teamId, ChatMessage message) async {
+      String groupId, String teamId, ChatMessage message,
+      {bool notify = true}) async {
     await _teamMessages(groupId, teamId).doc(message.id).set(message.toMap());
+    // Expense bubbles pass notify:false — the expense commit already sends one
+    // summary notification, so the bubble must not double-notify.
+    if (!notify) return;
+    // Notify the rest of the team (owner + other workers) so a new message
+    // lights up their notification bell — the worker's home screen watches
+    // notifications live, so they see chat activity without opening the chat.
+    final team = await getTeamById(groupId, teamId);
+    if (team == null) return;
+    final recipients = <String>{team.ownerId, ...team.memberIds}
+        .where((id) => id.trim().isNotEmpty && id != message.senderId)
+        .toList();
+    if (recipients.isEmpty) return;
+    await notifyMultiple(
+      groupId,
+      title: 'رسالة في فريق ${team.name}',
+      body: _notificationSnippet(message.content),
+      actorId: message.senderId,
+      actorName: message.senderName,
+      targetUserIds: recipients,
+      teamId: teamId,
+    );
+  }
+
+  /// Tombstone the team-chat expense bubble tied to [transactionId] after its
+  /// transaction is deleted, so the bubble in the team feed reflects it (mirrors
+  /// the family markTransactionMessageDeleted).
+  Future<void> markTeamExpenseMessageDeleted(
+      String groupId, String teamId, String transactionId) async {
+    final q = await _teamMessages(groupId, teamId)
+        .where('transactionId', isEqualTo: transactionId)
+        .limit(1)
+        .get();
+    if (q.docs.isEmpty) return;
+    await q.docs.first.reference.update({
+      'isDeleted': true,
+      'content': 'تم حذف هذا المصروف وإرجاع أثره إلى المحفظة',
+    });
+  }
+
+  /// Keep the team-chat expense bubble's category/label in sync after a
+  /// recategorize (mirrors the family message update inside recategorizeExpense).
+  Future<void> recategorizeTeamExpenseMessage(String groupId, String teamId,
+      String transactionId, String category) async {
+    final q = await _teamMessages(groupId, teamId)
+        .where('transactionId', isEqualTo: transactionId)
+        .limit(1)
+        .get();
+    if (q.docs.isEmpty) return;
+    await q.docs.first.reference.update({'category': category});
+  }
+
+  /// A short one-line preview of a chat message for a notification body.
+  String _notificationSnippet(String text) {
+    final t = text.trim().replaceAll('\n', ' ');
+    return t.length > 80 ? '${t.substring(0, 80)}…' : t;
   }
 
   Future<void> clearTeamChatMessages(String groupId, String teamId) async {
@@ -2382,6 +2444,7 @@ class DatabaseService {
     required String actorId,
     required String actorName,
     required List<String> targetUserIds,
+    String? teamId,
   }) =>
       addFamilyNotification(FamilyNotificationModel(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -2392,6 +2455,7 @@ class DatabaseService {
         actorName: actorName,
         timestamp: DateTime.now(),
         targetUserIds: targetUserIds,
+        teamId: teamId,
       ));
 
   Future<void> markNotificationsRead(String groupId, String userId) async {

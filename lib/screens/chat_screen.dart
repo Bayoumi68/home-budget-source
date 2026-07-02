@@ -1808,13 +1808,11 @@ class _ChatScreenState extends State<ChatScreen> {
           MessageInput(
             controller: _textController,
             onSend: () => _sendMessage(),
-            // One consistent flow: tap the mic to start dictation, tap again to
-            // stop — the text lands in the box, then you tap SEND. The mic never
-            // sends by itself. (Expense-permission is enforced on save, not here,
-            // so any member can dictate/message.)
-            onMic: _isRecording
-                ? () => unawaited(_stopVoice())
-                : _startRecording,
+            // Press-and-hold: hold the mic to dictate, release to stop — the
+            // text lands in the box, then you tap SEND. The mic never sends by
+            // itself. (Expense-permission is enforced on save, not here.)
+            onMicStart: () => unawaited(_startRecording()),
+            onMicStop: () => unawaited(_stopVoice()),
             isRecording: _isRecording,
             isSending: _isSending,
             enabled: !budget.loading,

@@ -9,6 +9,10 @@ class FamilyNotificationModel {
   final bool read;
   final List<String> readBy;
   final List<String> targetUserIds;
+  // When set, this notification is about that team — tapping it opens the
+  // team's chat. When null, it's a family event → opens the family chat.
+  // (Both chat messages and expense bubbles live in those feeds.)
+  final String? teamId;
 
   const FamilyNotificationModel({
     required this.id,
@@ -21,6 +25,7 @@ class FamilyNotificationModel {
     this.read = false,
     this.readBy = const [],
     this.targetUserIds = const [],
+    this.teamId,
   });
 
   Map<String, dynamic> toMap() => {
@@ -34,6 +39,7 @@ class FamilyNotificationModel {
         'read': read,
         'readBy': readBy,
         'targetUserIds': targetUserIds,
+        'teamId': teamId,
       };
 
   factory FamilyNotificationModel.fromMap(Map<String, dynamic> map) =>
@@ -52,6 +58,7 @@ class FamilyNotificationModel {
                 ?.map((e) => e.toString())
                 .toList() ??
             const [],
+        teamId: map['teamId'],
       );
 
   bool isVisibleFor(String userId) =>
@@ -71,5 +78,6 @@ class FamilyNotificationModel {
         read: read ?? this.read,
         readBy: readBy ?? this.readBy,
         targetUserIds: targetUserIds,
+        teamId: teamId,
       );
 }

@@ -669,6 +669,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
         actorId: user.id,
         actorName: user.name,
         targetUserIds: [user.id, worker.id],
+        teamId: team.id,
       );
     }
     if (!mounted) return;
@@ -809,6 +810,7 @@ class _TeamsScreenState extends State<TeamsScreen> {
         targetUserIds: <String>{team.ownerId, user.id, ...team.memberIds}
             .where((id) => id.isNotEmpty)
             .toList(),
+        teamId: team.id,
       );
     }
     await _load();

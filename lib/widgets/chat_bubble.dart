@@ -182,15 +182,19 @@ class ChatBubble extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 4),
-                      if (isMe)
+                      if (isMe && !isDeleted)
                         Icon(
-                          message.status == MessageStatus.read
-                              ? Icons.done_all
-                              : Icons.done,
+                          // ✓ = sent (still local / not yet on the server);
+                          // ✓✓ = delivered (server has it) or read.
+                          message.status == MessageStatus.sending
+                              ? Icons.access_time_rounded
+                              : message.status == MessageStatus.sent
+                                  ? Icons.done
+                                  : Icons.done_all,
                           size: 16,
                           color: message.status == MessageStatus.read
                               ? AppTheme.accentTeal
-                              : Colors.grey[400],
+                              : Colors.grey[500],
                         ),
                     ],
                   ),
