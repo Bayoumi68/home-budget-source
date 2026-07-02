@@ -1483,12 +1483,24 @@ class _ChatScreenState extends State<ChatScreen> {
                 t.date.year == nowMonth.year &&
                 t.date.month == nowMonth.month)
             .fold<double>(0, (s, t) => s + t.amount);
-    // Admin sees the whole feed; a member sees only their own + messages to them.
+    // Admin sees the whole feed. A member sees: their own messages, messages
+    // directed to them, and admin "send to all" broadcasts (admin-authored,
+    // no specific target). A member's own untargeted message is implicitly to
+    // the admin, so it must NOT leak to other members — hence the broadcast
+    // rule requires an ADMIN sender. System money lines stay scoped as before.
+    final adminIds =
+        _members.where((m) => m.isAdmin).map((m) => m.id).toSet();
+    bool isAdminBroadcast(ChatMessage m) =>
+        adminIds.contains(m.senderId) &&
+        m.type != MessageType.system &&
+        (m.targetUserId == null || m.targetUserId!.isEmpty);
     final visibleMessages = (user == null || user.isAdmin)
         ? chat.messages
         : chat.messages
             .where((m) =>
-                m.senderId == user.id || m.targetUserId == user.id)
+                m.senderId == user.id ||
+                m.targetUserId == user.id ||
+                isAdminBroadcast(m))
             .toList();
 
     return Scaffold(
