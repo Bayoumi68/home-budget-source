@@ -2,18 +2,22 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import '../models/user_model.dart';
 import '../models/chat_message_model.dart';
 import '../models/transaction_model.dart';
 import '../models/budget_model.dart';
+import '../models/category_model.dart';
 import '../models/group_model.dart';
 import '../models/family_notification_model.dart';
 import '../models/wallet_model.dart';
 import '../models/wallet_entry_model.dart';
 import '../models/team_model.dart';
 import '../config/constants.dart';
+import '../data/category_seeds.dart';
 import '../services/auth_service.dart';
 import '../utils/category_utils.dart';
+import '../utils/expense_description.dart';
 
 class FamilyMembership {
   final GroupModel group;
@@ -53,6 +57,7 @@ class DatabaseService {
   static const _sessionVersionKey = 'active_app_version';
   static final _secureRandom = Random.secure();
   final _authService = AuthService();
+  final _uuid = const Uuid();
 
   SharedPreferences? _prefs;
   FirebaseFirestore get _fs => FirebaseFirestore.instance;
@@ -79,6 +84,11 @@ class DatabaseService {
       _families.doc(groupId).collection('wallets');
   CollectionReference<Map<String, dynamic>> _teams(String groupId) =>
       _families.doc(groupId).collection('teams');
+  // Team-scoped group chat, isolated from the family's main `messages` feed by
+  // living under the team's own path — a worker/admin thread per team.
+  CollectionReference<Map<String, dynamic>> _teamMessages(
+          String groupId, String teamId) =>
+      _teams(groupId).doc(teamId).collection('messages');
   CollectionReference<Map<String, dynamic>> _learnedKeywords(String groupId) =>
       _families.doc(groupId).collection('learnedKeywords');
   CollectionReference<Map<String, dynamic>> _avatars(String groupId) =>
@@ -275,7 +285,6 @@ class DatabaseService {
       email: email,
       isAdmin: true,
       canAddExpenses: true,
-      canViewReports: true,
       canManageMembers: true,
       canManageBudgets: true,
       phoneVerified: true,
@@ -308,6 +317,7 @@ class DatabaseService {
       'createdAt': DateTime.now().toIso8601String(),
       'appVersion': AppConstants.appVersion,
     });
+    await ensureCategoriesSeeded(id);
     await writeDiagnostic('create_family', groupId: id, userId: admin.id);
     return group;
   }
@@ -349,7 +359,6 @@ class DatabaseService {
         authUid: authUid,
         email: email,
         canAddExpenses: true,
-        canViewReports: true,
         canManageMembers: false,
         canManageBudgets: false,
         phoneVerified: true,
@@ -454,7 +463,6 @@ class DatabaseService {
     required String name,
     required String phone,
     bool canAddExpenses = true,
-    bool canViewReports = true,
     bool canManageBudgets = false,
     bool canManageMembers = false,
     double monthlyLimit = 0,
@@ -466,7 +474,6 @@ class DatabaseService {
       phone: normalizedPhone,
       monthlyLimit: monthlyLimit,
       canAddExpenses: canAddExpenses,
-      canViewReports: canViewReports,
       canManageBudgets: canManageBudgets,
       canManageMembers: canManageMembers,
     );
@@ -708,7 +715,6 @@ class DatabaseService {
           name: team.memberNames[id] ?? 'عضو فريق',
           phone: team.memberPhones[id],
           canAddExpenses: true,
-          canViewReports: false,
           canManageMembers: false,
           canManageBudgets: false,
           phoneVerified: true,
@@ -727,56 +733,6 @@ class DatabaseService {
     await _families
         .doc(groupId)
         .set({'adminId': adminId}, SetOptions(merge: true));
-  }
-
-  /// Scenario A — the family's admin row still exists: reconnect it to [authUid]
-  /// (and email), and re-assert the admin role. Role of every other row is
-  /// untouched; nothing is merged or deleted.
-  Future<void> reconnectAdminRow(
-      String groupId, UserModel admin, String authUid, String? email) async {
-    final updated = admin.copyWith(
-      authUid: authUid,
-      email: email ?? admin.email,
-      isAdmin: true,
-      canManageMembers: true,
-      canManageBudgets: true,
-      canViewReports: true,
-      canAddExpenses: true,
-      phoneVerified: true,
-      // Strip any worker tag: if this row had been overwritten by a worker
-      // created with the admin's own phone, it must become a clean family
-      // admin again (isWorker is false when teamId is empty).
-      teamId: '',
-    );
-    await _members(groupId)
-        .doc(admin.id)
-        .set(updated.toMap(), SetOptions(merge: true));
-  }
-
-  /// Scenario B — `adminId` is a dangling pointer (the row was deleted): create
-  /// the admin row at exactly [adminId], bound to [authUid]. The phone is
-  /// recovered from the id (`phone_<phone>`), and the adminId pointer is
-  /// re-affirmed so the family is consistent.
-  Future<void> recreateAdminRow(
-      String groupId, String adminId, String authUid,
-      {required String name, String? email}) async {
-    final phone =
-        adminId.startsWith('phone_') ? adminId.substring('phone_'.length) : '';
-    final admin = UserModel(
-      id: adminId,
-      name: name,
-      phone: phone.isEmpty ? null : phone,
-      authUid: authUid,
-      email: email,
-      isAdmin: true,
-      canAddExpenses: true,
-      canViewReports: true,
-      canManageMembers: true,
-      canManageBudgets: true,
-      phoneVerified: true,
-    );
-    await _members(groupId).doc(adminId).set(admin.toMap());
-    await setGroupAdminId(groupId, adminId);
   }
 
   Future<void> joinGroup(String groupId, UserModel user) async {
@@ -962,11 +918,123 @@ class DatabaseService {
     return null;
   }
 
+  /// Change a JOINED worker's (or member's) phone — their real identity key.
+  /// Unlike changePendingMemberPhone (which refuses once joined), this
+  /// migrates every structural foreign key pointing at the old member id: the
+  /// member doc itself, their wallet, the family's memberIds list, their
+  /// team's memberIds/memberNames/memberPhones, every TransactionModel.userId,
+  /// every FamilyNotificationModel.targetUserIds entry, and every team-chat
+  /// message's senderId under their team. Historical descriptive snapshots
+  /// (TransactionModel.userName, WalletEntryModel.byName/byPhone,
+  /// ChatMessage.senderName) are left untouched — same precedent as
+  /// updateMemberNameLimit never rewriting old snapshots.
+  ///
+  /// Best-effort, not atomic (Firestore cannot transact across an unbounded
+  /// document set) — matches changePendingMemberPhone's own risk tolerance.
+  /// Operations are ordered so a partial failure leaves the OLD identity
+  /// fully functional: the new member doc is created FIRST (so both ids
+  /// resolve to "this person" during the migration window — login stays
+  /// unambiguous since it resolves via authUid, not this doc id), the
+  /// expensive paginated rewrites happen NEXT, and the OLD member doc is
+  /// deleted LAST, only once every other step has succeeded. A re-run after a
+  /// partial failure is safe: the "where field == oldId"-style queries only
+  /// ever return still-unmigrated docs.
+  Future<String?> changeJoinedMemberPhone(
+      String groupId, UserModel member, String newPhoneRaw) async {
+    final newPhone = _authService.normalizePhone(newPhoneRaw);
+    if (newPhone.length < 8) return 'اكتب رقم موبايل صحيح.';
+    final oldId = member.id;
+    final newId = _authService.memberIdForPhone(newPhone);
+    if (newId == oldId) return null; // unchanged
+    final existingByPhone = await getMemberByPhone(groupId, newPhone);
+    final existingDoc = await _members(groupId).doc(newId).get();
+    if (existingByPhone != null || existingDoc.exists) {
+      return 'هذا الرقم مستخدم بالفعل لحساب آخر في هذه العائلة.';
+    }
+
+    // 1) Create the NEW member doc first — carries authUid forward unchanged,
+    // so login (which resolves by authUid, not this id) stays unambiguous.
+    final moved = member.copyWith(id: newId, phone: newPhone);
+    await _members(groupId).doc(newId).set(moved.toMap());
+
+    // 2) Move the wallet (looked up by ownerId).
+    final wallets = await getWalletsSync(groupId);
+    for (final w in wallets) {
+      if (w.isMemberWallet && w.ownerId == oldId) {
+        await _wallets(groupId)
+            .doc(w.id)
+            .set({'ownerId': newId}, SetOptions(merge: true));
+      }
+    }
+
+    // 3) Family memberIds list.
+    final famSnap = await _families.doc(groupId).get();
+    final ids =
+        List<String>.from((famSnap.data()?['memberIds'] ?? const []) as List);
+    if (ids.contains(oldId)) {
+      final newIds =
+          ids.map((id) => id == oldId ? newId : id).toSet().toList();
+      await _families
+          .doc(groupId)
+          .set({'memberIds': newIds}, SetOptions(merge: true));
+    }
+
+    // 4) Team membership + (7) that team's chat message senderIds.
+    final teamId = member.teamId;
+    if (teamId != null && teamId.isNotEmpty) {
+      final team = await getTeamById(groupId, teamId);
+      if (team != null) {
+        final tIds = team.memberIds
+            .map((id) => id == oldId ? newId : id)
+            .toSet()
+            .toList();
+        final names = Map<String, String>.from(team.memberNames);
+        final phones = Map<String, String>.from(team.memberPhones);
+        if (names.containsKey(oldId)) names[newId] = names.remove(oldId)!;
+        phones.remove(oldId);
+        phones[newId] = newPhone;
+        await _teams(groupId).doc(teamId).set({
+          'memberIds': tIds,
+          'memberNames': names,
+          'memberPhones': phones,
+        }, SetOptions(merge: true));
+      }
+      await _updateCollectionWhere(
+        _teamMessages(groupId, teamId).where('senderId', isEqualTo: oldId),
+        (_) => {'senderId': newId},
+      );
+    }
+
+    // 5) Every transaction's userId (paginated — a worker/member may have many).
+    await _updateCollectionWhere(
+      _transactions(groupId).where('userId', isEqualTo: oldId),
+      (_) => {'userId': newId},
+    );
+
+    // 6) Every notification's targetUserIds array — read-modify-write since
+    // both the add and the remove target the same field.
+    await _updateCollectionWhere(
+      _notifications(groupId).where('targetUserIds', arrayContains: oldId),
+      (data) {
+        final targets =
+            List<String>.from((data['targetUserIds'] ?? const []) as List);
+        return {
+          'targetUserIds':
+              targets.map((id) => id == oldId ? newId : id).toList(),
+        };
+      },
+    );
+
+    // 8) Delete the OLD member doc LAST — only reached once every step above
+    // has succeeded without throwing.
+    await _members(groupId).doc(oldId).delete();
+    return null;
+  }
+
   Future<void> updateMemberPermissions(
     String groupId,
     String userId, {
     bool? canAddExpenses,
-    bool? canViewReports,
     bool? canManageMembers,
     bool? canManageBudgets,
   }) async {
@@ -975,7 +1043,6 @@ class DatabaseService {
       userId,
       (member) => member.copyWith(
         canAddExpenses: canAddExpenses,
-        canViewReports: canViewReports,
         canManageMembers: canManageMembers,
         canManageBudgets: canManageBudgets,
       ),
@@ -1006,7 +1073,10 @@ class DatabaseService {
 
   Future<double> getMemberMonthlySpending(String groupId, String userId) async {
     final now = DateTime.now();
-    final txns = await getTransactionsSync(groupId);
+    // Scoped to one userId already, so a worker's own team expenses can't
+    // double-count anything here — include them, or a worker's currentSpending
+    // (and their monthly-cap warning) silently never reflects team spend.
+    final txns = await getTransactionsSync(groupId, includeTeamExpenses: true);
     return txns.where((t) {
       return t.userId == userId &&
           t.isExpense &&
@@ -1191,6 +1261,123 @@ class DatabaseService {
         .fold<double>(0.0, (sum, t) => sum + t.amount);
   }
 
+  /// One-time repair for a worker whose wallet ledger shows expense history
+  /// that never shows up in any transactions-based view (تقاريري, this
+  /// screen's own list, the admin's team ledger). Two distinct faults, fixed
+  /// together:
+  ///
+  /// 1) A transaction whose `walletId` matches this worker's wallet but whose
+  ///    `teamId`/`userId` are stale (from before a re-key, or from before the
+  ///    team-expense flow stamped `teamId` on every write) — re-tag it. The
+  ///    wallet's own id never changes even when its `ownerId` is repointed by
+  ///    changeJoinedMemberPhone, so `walletId` is the one link that can't drift.
+  ///
+  /// 2) A wallet-ledger entry with `source == 'expense'` whose `refTransactionId`
+  ///    points at NO existing transaction document — meaning the transaction
+  ///    was never written at all (an older/incomplete code path once posted
+  ///    the ledger debit without also calling addTransaction). Nothing to
+  ///    re-tag here; the record has to be reconstructed from the ledger entry
+  ///    itself (amount, date, and the category encoded in its note as
+  ///    "<raw text> — <category>", the fixed shape buildExpenseDescription
+  ///    always writes).
+  ///
+  /// Runs automatically from every refresh action (worker's own page, admin's
+  /// team page, the wallets overview) instead of needing a manual admin
+  /// button — it's purely additive (creates or re-tags, never deletes or
+  /// changes an amount), so it's safe to run every time. Returns how many
+  /// transactions were created or re-tagged.
+  Future<int> reconcileMemberWallet(
+      String groupId, UserModel owner, WalletModel wallet) async {
+    if (!wallet.isMemberWallet || wallet.ownerId != owner.id) return 0;
+    String? teamId;
+    String? teamName;
+    if (owner.isWorker) {
+      teamId = owner.teamId;
+      teamName = (await getTeamById(groupId, teamId!))?.name;
+    }
+
+    final all = await getTransactionsSync(groupId, includeTeamExpenses: true);
+    final byId = {for (final t in all) t.id: t};
+    var fixed = 0;
+
+    // 1) Re-tag transactions that exist but drifted from this wallet's
+    // current owner/team (e.g. from before a re-key).
+    for (final t in all) {
+      if (t.walletId != wallet.id) continue;
+      final needsUserFix = t.userId != owner.id;
+      final needsTeamFix = teamId != null && t.teamId != teamId;
+      if (!needsUserFix && !needsTeamFix) continue;
+      final update = <String, dynamic>{};
+      if (needsUserFix) {
+        update['userId'] = owner.id;
+        update['userName'] = owner.name;
+      }
+      if (needsTeamFix) {
+        update['teamId'] = teamId;
+        update['teamName'] = teamName;
+      }
+      await _transactions(groupId)
+          .doc(t.id)
+          .set(update, SetOptions(merge: true));
+      fixed++;
+    }
+
+    // 2) Backfill expense ledger entries with no transaction behind them.
+    final entries = await getWalletEntriesSync(groupId, wallet.id);
+    for (final e in entries) {
+      if (e.source != 'expense') continue;
+      final existingId = e.refTransactionId;
+      if (existingId != null && byId.containsKey(existingId)) continue;
+      final note = (e.note ?? '').trim();
+      final parts = note.split(' — ');
+      final category = parts.length > 1 ? parts.last.trim() : 'غير مصنف';
+      final rawText = parts.length > 1
+          ? parts.sublist(0, parts.length - 1).join(' — ').trim()
+          : note;
+      final id = existingId ?? _uuid.v4();
+      await addTransaction(TransactionModel(
+        id: id,
+        groupId: groupId,
+        userId: owner.id,
+        userName: owner.name,
+        amount: e.amount,
+        category: category,
+        isExpense: true,
+        note: rawText.isEmpty ? null : rawText,
+        date: e.at,
+        walletId: wallet.id,
+        walletName: wallet.name,
+        teamId: teamId,
+        teamName: teamName,
+        description: note.isEmpty ? category : note,
+      ));
+      fixed++;
+    }
+    return fixed;
+  }
+
+  /// Reconciles every family member's AND every worker's own wallet in one
+  /// pass — for admin-facing refresh actions that need to self-heal
+  /// everyone's reports at once (the family wallets overview, the teams
+  /// page), not just one person's own.
+  Future<int> reconcileAllMemberWallets(String groupId) async {
+    final members = await getMembersSync(groupId);
+    final wallets = await getWalletsSync(groupId);
+    var fixed = 0;
+    for (final m in members) {
+      WalletModel? wallet;
+      for (final w in wallets) {
+        if (w.isMemberWallet && w.ownerId == m.id) {
+          wallet = w;
+          break;
+        }
+      }
+      if (wallet == null) continue;
+      fixed += await reconcileMemberWallet(groupId, m, wallet);
+    }
+    return fixed;
+  }
+
   // ─── Messages ───
   Future<List<ChatMessage>> getMessagesSync(String groupId) async {
     final q = await _messages(groupId)
@@ -1233,6 +1420,37 @@ class DatabaseService {
     await _deleteQuerySnapshot(await _messages(groupId).limit(500).get());
   }
 
+  // ─── Team chat ───
+  // Mirrors the flat family chat methods above exactly, just scoped under
+  // families/{groupId}/teams/{teamId}/messages instead of families/{groupId}/messages.
+  Future<List<ChatMessage>> getTeamChatMessagesSync(
+      String groupId, String teamId) async {
+    final q = await _teamMessages(groupId, teamId)
+        .orderBy('timestamp', descending: true)
+        .limit(200)
+        .get();
+    return q.docs.map((d) => ChatMessage.fromMap(d.data())).toList();
+  }
+
+  Stream<List<ChatMessage>> watchTeamChatMessages(
+      String groupId, String teamId) {
+    return _teamMessages(groupId, teamId)
+        .orderBy('timestamp', descending: true)
+        .limit(200)
+        .snapshots()
+        .map((q) => q.docs.map((d) => ChatMessage.fromMap(d.data())).toList());
+  }
+
+  Future<void> sendTeamChatMessage(
+      String groupId, String teamId, ChatMessage message) async {
+    await _teamMessages(groupId, teamId).doc(message.id).set(message.toMap());
+  }
+
+  Future<void> clearTeamChatMessages(String groupId, String teamId) async {
+    await _deleteQuerySnapshot(
+        await _teamMessages(groupId, teamId).limit(500).get());
+  }
+
   // ─── Transactions ───
   Future<List<TransactionModel>> getTransactionsSync(
     String groupId, {
@@ -1268,32 +1486,84 @@ class DatabaseService {
     }
   }
 
-  /// Delete a transaction AND undo its effect on the ledger. For an expense
-  /// this posts a reversing entry (+amount) back into the wallet it was charged
-  /// to, so the wallet's accumulated balance returns to where it was, then it
-  /// refreshes the member's monthly spending and the budgets. Doing the
-  /// reversal here (not in the callers) guarantees no delete path can leave the
-  /// wallet under-counted.
+  /// The ONE path for recording an expense that also draws from a wallet.
+  /// Every "an expense happened" caller (family, team) must use this instead
+  /// of chaining addTransaction + applyWalletDelta as two separate network
+  /// calls — that pattern is exactly how old data ended up with a wallet
+  /// ledger entry and NO transaction document behind it (one call succeeded,
+  /// the other didn't, or an earlier version of this code only ever made
+  /// one of the two calls). Here both writes ride the same Firestore
+  /// transaction as the wallet balance update: either the transaction
+  /// document and its wallet effect both land, or neither does.
+  Future<void> recordTransaction(
+    TransactionModel transaction, {
+    WalletModel? wallet,
+    String? byName,
+    String? byPhone,
+  }) async {
+    final txnRef = _transactions(transaction.groupId).doc(transaction.id);
+    if (wallet == null || !transaction.isExpense) {
+      await txnRef.set(transaction.toMap());
+    } else {
+      await applyWalletDelta(
+        transaction.groupId,
+        wallet.id,
+        -transaction.amount,
+        source: 'expense',
+        note: transaction.description ?? transaction.category,
+        refTransactionId: transaction.id,
+        byName: byName,
+        byPhone: byPhone,
+        alsoWrite: (tx) => tx.set(txnRef, transaction.toMap()),
+      );
+    }
+    if (transaction.isExpense) {
+      try {
+        final currentSpend = await getMemberMonthlySpending(
+            transaction.groupId, transaction.userId);
+        await updateMember(
+          transaction.groupId,
+          transaction.userId,
+          (member) => member.copyWith(currentSpending: currentSpend),
+        );
+        await recalculateBudgetsForCurrentMonth(transaction.groupId);
+      } catch (_) {
+        // The transaction + wallet effect are already committed atomically
+        // above. Totals will refresh from streams/cache when reconnected.
+      }
+    }
+  }
+
+  /// Delete a transaction AND undo its effect on the ledger, atomically — the
+  /// document delete rides the SAME Firestore transaction as the reversing
+  /// wallet entry, so a delete can never succeed while its reversal fails (or
+  /// vice versa), which would otherwise silently make money vanish or
+  /// double-count. For an expense this posts a reversing entry (+amount) back
+  /// into the wallet it was charged to, then refreshes the member's monthly
+  /// spending and the budgets.
   Future<TransactionModel?> deleteTransaction(
       String groupId, String transactionId,
       {String? byName, String? byPhone}) async {
-    final doc = await _transactions(groupId).doc(transactionId).get();
+    final ref = _transactions(groupId).doc(transactionId);
+    final doc = await ref.get();
     if (!doc.exists || doc.data() == null) return null;
     final deleted = TransactionModel.fromMap(doc.data()!);
-    await doc.reference.delete();
+    if (deleted.isExpense && (deleted.walletId ?? '').isNotEmpty) {
+      await applyWalletDelta(
+        groupId,
+        deleted.walletId!,
+        deleted.amount, // + : put the spent money back into the wallet
+        source: 'reversal',
+        note: 'إرجاع: ${deleted.category}',
+        refTransactionId: deleted.id,
+        byName: byName,
+        byPhone: byPhone,
+        alsoWrite: (tx) => tx.delete(ref),
+      );
+    } else {
+      await ref.delete();
+    }
     if (deleted.isExpense) {
-      if ((deleted.walletId ?? '').isNotEmpty) {
-        await applyWalletDelta(
-          groupId,
-          deleted.walletId!,
-          deleted.amount, // + : put the spent money back into the wallet
-          source: 'reversal',
-          note: 'إرجاع: ${deleted.category}',
-          refTransactionId: deleted.id,
-          byName: byName,
-          byPhone: byPhone,
-        );
-      }
       final currentSpend =
           await getMemberMonthlySpending(groupId, deleted.userId);
       await updateMember(
@@ -1410,7 +1680,6 @@ class DatabaseService {
       phone: normalizedPhone.isEmpty ? null : normalizedPhone,
       teamId: teamId,
       canAddExpenses: true,
-      canViewReports: false,
       canManageMembers: false,
       canManageBudgets: false,
     );
@@ -1424,7 +1693,12 @@ class DatabaseService {
   }
 
   /// Move [amount] between two wallets (admin funding/withdrawal): CR the
-  /// source, DR the destination. Returns an Arabic error, or null on success.
+  /// source, DR the destination, atomically in ONE Firestore transaction —
+  /// either both sides move together or neither does. Two sequential
+  /// postWalletEntry calls could leave money debited from the source with
+  /// the destination credit never landing (a dropped connection between the
+  /// two calls), which is the same class of partial-write bug as an expense
+  /// with no transaction record. Returns an Arabic error, or null on success.
   Future<String?> transferBetweenWallets(
     String groupId, {
     required String fromWalletId,
@@ -1435,30 +1709,73 @@ class DatabaseService {
   }) async {
     if (amount <= 0) return 'المبلغ غير صحيح.';
     if (fromWalletId == toWalletId) return 'لا يمكن التحويل لنفس المحفظة.';
-    final fromSnap = await _wallets(groupId).doc(fromWalletId).get();
-    final toSnap = await _wallets(groupId).doc(toWalletId).get();
-    if (!fromSnap.exists || !toSnap.exists) return 'المحفظة غير موجودة.';
-    final fromBal = (fromSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
-    final fromName = (fromSnap.data()?['name'] ?? 'المحفظة').toString();
-    final toName = (toSnap.data()?['name'] ?? 'المحفظة').toString();
-    if (amount > fromBal + 0.005) {
-      return 'الرصيد غير كافٍ في $fromName.';
-    }
-    await postWalletEntry(groupId, fromWalletId,
-        direction: 'CR',
-        amount: amount,
-        source: 'transfer',
-        note: 'تحويل إلى $toName',
-        byName: byName,
-        byPhone: byPhone);
-    await postWalletEntry(groupId, toWalletId,
-        direction: 'DR',
-        amount: amount,
-        source: 'transfer',
-        note: 'تحويل من $fromName',
-        byName: byName,
-        byPhone: byPhone);
-    return null;
+    final fromRef = _wallets(groupId).doc(fromWalletId);
+    final toRef = _wallets(groupId).doc(toWalletId);
+    final fromEntriesRef = fromRef.collection('entries');
+    final toEntriesRef = toRef.collection('entries');
+
+    return _fs.runTransaction<String?>((tx) async {
+      final fromSnap = await tx.get(fromRef);
+      final toSnap = await tx.get(toRef);
+      if (!fromSnap.exists || !toSnap.exists) return 'المحفظة غير موجودة.';
+      final fromData = fromSnap.data() ?? <String, dynamic>{};
+      final toData = toSnap.data() ?? <String, dynamic>{};
+      final fromBal = (fromData['balance'] as num?)?.toDouble() ?? 0;
+      final toBal = (toData['balance'] as num?)?.toDouble() ?? 0;
+      final fromName = (fromData['name'] ?? 'المحفظة').toString();
+      final toName = (toData['name'] ?? 'المحفظة').toString();
+      if (amount > fromBal + 0.005) {
+        return 'الرصيد غير كافٍ في $fromName.';
+      }
+
+      final nowIso = DateTime.now().toIso8601String();
+      final newFromBal = fromBal - amount;
+      final newToBal = toBal + amount;
+
+      final fromEntryRef = fromEntriesRef.doc();
+      tx.set(fromEntryRef, {
+        'id': fromEntryRef.id,
+        'walletId': fromWalletId,
+        'direction': 'CR',
+        'amount': amount,
+        'balanceAfter': newFromBal,
+        'at': nowIso,
+        'source': 'transfer',
+        'note': 'تحويل إلى $toName',
+        'byName': byName,
+        'byPhone': byPhone,
+      });
+      tx.set(fromRef, {
+        'balance': newFromBal,
+        'updatedAt': nowIso,
+        'updatedByName': byName,
+        'updatedByPhone': byPhone,
+        'ledgerStarted': true,
+      }, SetOptions(merge: true));
+
+      final toEntryRef = toEntriesRef.doc();
+      tx.set(toEntryRef, {
+        'id': toEntryRef.id,
+        'walletId': toWalletId,
+        'direction': 'DR',
+        'amount': amount,
+        'balanceAfter': newToBal,
+        'at': nowIso,
+        'source': 'transfer',
+        'note': 'تحويل من $fromName',
+        'byName': byName,
+        'byPhone': byPhone,
+      });
+      tx.set(toRef, {
+        'balance': newToBal,
+        'updatedAt': nowIso,
+        'updatedByName': byName,
+        'updatedByPhone': byPhone,
+        'ledgerStarted': true,
+      }, SetOptions(merge: true));
+
+      return null;
+    });
   }
 
   /// Create a wallet. If [balance] is non-zero it is recorded as an opening
@@ -1558,6 +1875,7 @@ class DatabaseService {
     String? refTransactionId,
     String? byName,
     String? byPhone,
+    void Function(Transaction tx)? alsoWrite,
   }) {
     final signed = direction == 'CR' ? -amount.abs() : amount.abs();
     return _postWallet(
@@ -1569,11 +1887,20 @@ class DatabaseService {
       refTransactionId: refTransactionId,
       byName: byName,
       byPhone: byPhone,
+      alsoWrite: alsoWrite,
     );
   }
 
   /// Backwards-compatible signed delta (used by expense/reversal flows). A
   /// negative delta credits the wallet, a positive delta debits it.
+  ///
+  /// [alsoWrite] lets a caller fold ANOTHER write (e.g. the TransactionModel
+  /// document this ledger entry belongs to) into the SAME Firestore
+  /// transaction as the balance update and ledger entry — either everything
+  /// commits together or nothing does. Without this, a transaction document
+  /// and its wallet effect are two independent network calls that can
+  /// partially fail, leaving one collection without the other (exactly the
+  /// bug behind old workers' wallet entries with no transaction record).
   Future<double> applyWalletDelta(
     String groupId,
     String walletId,
@@ -1583,6 +1910,7 @@ class DatabaseService {
     String? refTransactionId,
     String? byName,
     String? byPhone,
+    void Function(Transaction tx)? alsoWrite,
   }) {
     if (walletId.trim().isEmpty) return Future.value(0);
     return _postWallet(
@@ -1594,12 +1922,15 @@ class DatabaseService {
       refTransactionId: refTransactionId,
       byName: byName,
       byPhone: byPhone,
+      alsoWrite: alsoWrite,
     );
   }
 
   /// Core ledger transaction: lazily creates an opening entry for legacy
   /// wallets, appends the new entry with its accumulated balance, and updates
-  /// the parent wallet — all atomically.
+  /// the parent wallet — all atomically. [alsoWrite] runs inside the same
+  /// Firestore transaction, so a caller can pair another document write with
+  /// this wallet effect and get true all-or-nothing atomicity across both.
   Future<double> _postWallet(
     String groupId,
     String walletId, {
@@ -1609,19 +1940,26 @@ class DatabaseService {
     String? refTransactionId,
     String? byName,
     String? byPhone,
+    void Function(Transaction tx)? alsoWrite,
   }) async {
     final walletRef = _wallets(groupId).doc(walletId);
     final entriesRef = walletRef.collection('entries');
     return _fs.runTransaction<double>((tx) async {
       final snap = await tx.get(walletRef);
-      if (!snap.exists) return 0; // wallet gone (e.g. archived) → no-op
+      if (!snap.exists) {
+        alsoWrite?.call(tx);
+        return 0; // wallet gone (e.g. archived) → no-op on the wallet side
+      }
       final data = snap.data() ?? <String, dynamic>{};
       final current = (data['balance'] as num?)?.toDouble() ?? 0;
       final ledgerStarted = data['ledgerStarted'] == true;
       final createdAt =
           (data['createdAt'] as String?) ?? DateTime.now().toIso8601String();
       final signed = computeSigned(current);
-      if (signed == 0) return current;
+      if (signed == 0) {
+        alsoWrite?.call(tx);
+        return current;
+      }
 
       final nowIso = DateTime.now().toIso8601String();
 
@@ -1667,6 +2005,7 @@ class DatabaseService {
         'ledgerStarted': true,
       }, SetOptions(merge: true));
 
+      alsoWrite?.call(tx);
       return running;
     });
   }
@@ -1683,19 +2022,22 @@ class DatabaseService {
   }
 
   // ─── Expense Categories + Budgets ───
-  Future<List<String>> getExpenseCategoriesSync(String groupId) async {
+  // Categories are fully dynamic: seeded once per family (see
+  // ensureCategoriesSeeded) from CategorySeeds, then admin-editable from
+  // there — replacing the old hardcoded AppConstants/AIService tables.
+  Future<List<CategoryModel>> getCategoriesSync(String groupId,
+      {bool includeHidden = false}) async {
     final q = await _categories(groupId).orderBy('createdAt').get();
-    final bq = await _budgets(groupId).get();
-    final hiddenKeys = q.docs
-        .where((d) => d.data()['hidden'] == true)
-        .map((d) => _categoryKey((d.data()['name'] ?? d.id).toString()))
-        .where((key) => key.isNotEmpty)
-        .toSet();
-    final saved = q.docs
-        .where((d) => d.data()['hidden'] != true)
-        .map((d) => (d.data()['name'] ?? '').toString().trim())
-        .where((name) => name.isNotEmpty)
+    return q.docs
+        .map((d) => CategoryModel.fromMap({...d.data(), 'id': d.id}))
+        .where((c) => includeHidden || !c.hidden)
         .toList();
+  }
+
+  /// Back-compat: expense category display names only, as a flat list.
+  Future<List<String>> getExpenseCategoriesSync(String groupId) async {
+    final categories = await getCategoriesSync(groupId);
+    final bq = await _budgets(groupId).get();
     final budgetNames = bq.docs
         .map((d) => (d.data()['category'] ?? '').toString().trim())
         .where((name) => name.isNotEmpty)
@@ -1703,28 +2045,47 @@ class DatabaseService {
     final result = <String>[];
     final seen = <String>{};
     for (final name in [
-      ...AppConstants.expenseCategories,
-      ...saved,
-      ...budgetNames
+      ...categories.where((c) => !c.isIncome).map((c) => c.name),
+      ...budgetNames,
     ]) {
       final key = _categoryKey(name);
-      if (key.isEmpty || seen.contains(key) || hiddenKeys.contains(key)) {
-        continue;
-      }
+      if (key.isEmpty || seen.contains(key)) continue;
       seen.add(key);
       result.add(name);
     }
     return result;
   }
 
+  /// Writes the 19 built-in expense + 5 income categories as real documents,
+  /// once per family. No-op if the family already has ANY category doc (a
+  /// brand-new family is seeded at creation; an existing family is seeded the
+  /// next time it loads — see BudgetProvider._ensureProvisioned). This never
+  /// touches transactions/budgets — it only populates the category catalog.
+  Future<void> ensureCategoriesSeeded(String groupId) async {
+    final existing = await _categories(groupId).limit(1).get();
+    if (existing.docs.isNotEmpty) return;
+    final batch = _fs.batch();
+    for (final c in [
+      ...CategorySeeds.builtInExpenseCategories,
+      ...CategorySeeds.builtInIncomeCategories,
+    ]) {
+      batch.set(_categories(groupId).doc(c.id), c.toMap());
+    }
+    await batch.commit();
+  }
+
   Future<void> addExpenseCategory(
     String groupId,
     String category, {
     double? limit,
+    List<String>? keywords,
+    String? icon,
+    bool isIncome = false,
   }) async {
     final clean = category.trim();
     if (clean.isEmpty) return;
-    await _ensureCategoryStored(groupId, clean);
+    await _ensureCategoryStored(groupId, clean,
+        keywords: keywords, icon: icon, isIncome: isIncome);
     if (limit != null && limit >= 0) {
       await setBudget(groupId, clean, limit);
     }
@@ -1733,13 +2094,30 @@ class DatabaseService {
   Future<void> removeExpenseCategory(String groupId, String category) async {
     final clean = category.trim();
     if (clean.isEmpty) return;
-    final id = _docSafeId(clean);
-    await _categories(groupId).doc(id).set({
+    final ref = await _findCategoryRefByName(groupId, clean) ??
+        _categories(groupId).doc(_docSafeId(clean));
+    await ref.set({
       'name': clean,
       'hidden': true,
       'updatedAt': DateTime.now().toIso8601String(),
     }, SetOptions(merge: true));
-    await _budgets(groupId).doc(id).delete();
+    await _budgets(groupId).doc(_docSafeId(clean)).delete();
+  }
+
+  Future<void> updateCategoryIcon(
+      String groupId, String categoryId, String icon) async {
+    await _categories(groupId).doc(categoryId).set({
+      'icon': icon,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> updateCategoryKeywords(
+      String groupId, String categoryId, List<String> keywords) async {
+    await _categories(groupId).doc(categoryId).set({
+      'keywords': keywords,
+      'updatedAt': DateTime.now().toIso8601String(),
+    }, SetOptions(merge: true));
   }
 
   Future<List<BudgetModel>> getBudgetsSync(String groupId) async {
@@ -1776,14 +2154,52 @@ class DatabaseService {
     }, SetOptions(merge: true));
   }
 
-  Future<void> _ensureCategoryStored(String groupId, String category) async {
+  /// Finds an existing category doc by its display NAME (works for both
+  /// legacy name-keyed docs and new uuid-keyed ones) — categories have no
+  /// other identity to search by until the caller already has an id.
+  Future<DocumentReference<Map<String, dynamic>>?> _findCategoryRefByName(
+      String groupId, String name) async {
+    final key = _categoryKey(name);
+    if (key.isEmpty) return null;
+    final q = await _categories(groupId).get();
+    for (final d in q.docs) {
+      final docName = (d.data()['name'] ?? d.id).toString();
+      if (_categoryKey(docName) == key) return d.reference;
+    }
+    return null;
+  }
+
+  Future<void> _ensureCategoryStored(
+    String groupId,
+    String category, {
+    List<String>? keywords,
+    String? icon,
+    bool isIncome = false,
+  }) async {
     final clean = category.trim();
     if (clean.isEmpty) return;
-    await _categories(groupId).doc(_docSafeId(clean)).set({
+    final existingRef = await _findCategoryRefByName(groupId, clean);
+    if (existingRef != null) {
+      await existingRef.set({
+        'name': clean,
+        'hidden': false,
+        if (keywords != null) 'keywords': keywords,
+        if (icon != null) 'icon': icon,
+        'updatedAt': DateTime.now().toIso8601String(),
+      }, SetOptions(merge: true));
+      return;
+    }
+    final id = _uuid.v4();
+    await _categories(groupId).doc(id).set({
+      'id': id,
       'name': clean,
+      'icon': icon ?? '📌',
+      'keywords': keywords ?? <String>[],
+      'isIncome': isIncome,
       'hidden': false,
+      'isBuiltIn': false,
       'createdAt': DateTime.now().toIso8601String(),
-    }, SetOptions(merge: true));
+    });
   }
 
   // ─── Offline learning: keyword → category, taught by user corrections ───
@@ -1844,21 +2260,26 @@ class DatabaseService {
     final txnRef = _transactions(groupId).doc(transactionId);
     final txnDoc = await txnRef.get();
     if (!txnDoc.exists) return;
-    final txnNote = (txnDoc.data()?['note'] ?? '').toString();
-    await txnRef.set({'category': category}, SetOptions(merge: true));
+    final txnData = txnDoc.data()!;
+    final txnNote = (txnData['note'] ?? '').toString();
+    final amount = (txnData['amount'] as num?)?.toDouble() ?? 0;
+    final isExpense = txnData['isExpense'] != false;
+    final description =
+        buildExpenseDescription(rawText: txnNote, categoryName: category);
+    await txnRef.set({
+      'category': category,
+      'description': description,
+    }, SetOptions(merge: true));
 
     final q = await _messages(groupId)
         .where('transactionId', isEqualTo: transactionId)
         .limit(1)
         .get();
     if (q.docs.isNotEmpty) {
-      final data = q.docs.first.data();
-      final amount = (data['amount'] as num?)?.toDouble() ?? 0;
-      final prefix =
-          (data['content'] ?? '').toString().startsWith('دخل') ? 'دخل' : 'مصروف';
       await q.docs.first.reference.update({
         'category': category,
-        'content': '$prefix ${amount.toStringAsFixed(0)} ج — $category',
+        'content': buildExpenseBubbleContent(
+            isExpense: isExpense, amount: amount, rawText: txnNote),
       });
     }
 
@@ -1894,6 +2315,27 @@ class DatabaseService {
   Future<void> addFamilyNotification(FamilyNotificationModel item) async {
     await _notifications(item.groupId).doc(item.id).set(item.toMap());
   }
+
+  /// Shared "notify everyone affected by a money event" helper — dedupes what
+  /// every fund/withdraw/transfer/delete call site used to hand-build inline.
+  Future<void> notifyMultiple(
+    String groupId, {
+    required String title,
+    required String body,
+    required String actorId,
+    required String actorName,
+    required List<String> targetUserIds,
+  }) =>
+      addFamilyNotification(FamilyNotificationModel(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        groupId: groupId,
+        title: title,
+        body: body,
+        actorId: actorId,
+        actorName: actorName,
+        timestamp: DateTime.now(),
+        targetUserIds: targetUserIds,
+      ));
 
   Future<void> markNotificationsRead(String groupId, String userId) async {
     final q = await _notifications(groupId).limit(100).get();
@@ -1965,6 +2407,29 @@ class DatabaseService {
     // 4) Clear the chat feed + notifications (now-orphaned money entries).
     await _wipeCollection(_messages(groupId));
     await _wipeCollection(_notifications(groupId));
+  }
+
+  /// Page through [query]'s results in batches of 400 and merge-apply
+  /// [buildUpdate]'s returned fields to each doc, committing per page,
+  /// looping until a page returns fewer than 400 docs. Mirrors
+  /// _wipeCollection's pagination shape but updates instead of deletes.
+  /// Naturally idempotent for "where field == oldValue"-style queries: once a
+  /// doc is updated it no longer matches, so a re-run only touches whatever
+  /// is still unmigrated.
+  Future<void> _updateCollectionWhere(
+    Query<Map<String, dynamic>> query,
+    Map<String, dynamic> Function(Map<String, dynamic> data) buildUpdate,
+  ) async {
+    while (true) {
+      final snap = await query.limit(400).get();
+      if (snap.docs.isEmpty) break;
+      final batch = _fs.batch();
+      for (final doc in snap.docs) {
+        batch.set(doc.reference, buildUpdate(doc.data()), SetOptions(merge: true));
+      }
+      await batch.commit();
+      if (snap.docs.length < 400) break;
+    }
   }
 
   /// Delete every document in a (sub)collection in batches — Firestore caps a
@@ -2160,7 +2625,10 @@ class DatabaseService {
               .where((w) => w.isMemberWallet && w.ownerId == memberId)
               .toList();
     } else {
-      relevant = wallets;
+      // Whole-family balance = the admin's own cash sources only, matching
+      // BudgetProvider.adminWalletBalance and WalletsOverviewScreen — a
+      // member's or worker's own wallet is their asset, not the family's.
+      relevant = wallets.where((w) => w.isAdminWallet).toList();
     }
     final balance = relevant.fold<double>(0.0, (s, w) => s + w.balance);
     var funded = 0.0;
@@ -2264,7 +2732,6 @@ class DatabaseService {
     for (final key in [
       'isAdmin',
       'canAddExpenses',
-      'canViewReports',
       'canManageMembers',
       'canManageBudgets',
       'phoneVerified'

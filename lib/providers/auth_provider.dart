@@ -4,6 +4,7 @@ import '../services/database_service.dart';
 import '../models/user_model.dart';
 import '../models/group_model.dart';
 import '../models/team_model.dart';
+import '../utils/web_url.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -197,97 +198,6 @@ class AuthProvider extends ChangeNotifier {
     return null;
   }
 
-  /// Every member doc in [groupId] (admin + members), for the recovery picker.
-  Future<List<UserModel>> familyMembers(String groupId) =>
-      _db.getMembersSync(groupId);
-
-  /// Every account for this login — matched by BOTH authUid and the Google
-  /// email (the comprehensive list the picker uses). This is what the recovery
-  /// shows, so the user's record appears even if only the uid binding survived.
-  Future<List<FamilyMembership>> accountsByEmail() async {
-    return myMemberships();
-  }
-
-  /// Reconnect a family's designated admin row (`families.adminId`) to the
-  /// current Google login. Scenario A: the row exists → rebind it. Scenario B:
-  /// the row is missing → recreate it. Returns whether it was recreated, plus
-  /// an Arabic error (null on success). Does not touch any other member row.
-  Future<({String? error, bool recreated, bool wasWorker})> reconnectAdmin(
-      String groupId, String adminId) async {
-    final uid = _authService.currentAuthUid;
-    if (uid == null) {
-      return (error: 'سجّل الدخول أولاً.', recreated: false, wasWorker: false);
-    }
-    if (adminId.trim().isEmpty) {
-      return (
-        error: 'لا يوجد معرّف قائد لهذه العائلة.',
-        recreated: false,
-        wasWorker: false
-      );
-    }
-    try {
-      final existing = await _db.getMember(groupId, adminId);
-      if (existing != null) {
-        final wasWorker = existing.isWorker;
-        await _db.reconnectAdminRow(
-            groupId, existing, uid, _authService.currentEmail);
-        return (error: null, recreated: false, wasWorker: wasWorker);
-      }
-      await _db.recreateAdminRow(
-        groupId,
-        adminId,
-        uid,
-        name: _authService.currentDisplayName ?? 'قائد العائلة',
-        email: _authService.currentEmail,
-      );
-      return (error: null, recreated: true, wasWorker: false);
-    } catch (e) {
-      return (error: 'تعذّرت الاستعادة: $e', recreated: false, wasWorker: false);
-    }
-  }
-
-  /// Open a membership by ids, re-fetching fresh (so a just-restored admin role
-  /// is reflected in the session). Returns an Arabic error, or null on success.
-  Future<String?> openMembershipById(String groupId, String memberId) async {
-    final m = await _db.getMember(groupId, memberId);
-    final g = await _db.getGroupById(groupId);
-    if (m == null || g == null) return 'تعذّر فتح الحساب.';
-    await openMembership(FamilyMembership(group: g, member: m));
-    return null;
-  }
-
-  /// Bind an existing family member doc to the current Google login. When
-  /// [makeAdmin] is set, also assert the admin role on that doc AND repoint the
-  /// family's adminId at it — so the family has a real, reachable admin again
-  /// even if the original admin record was overwritten or orphaned.
-  Future<String?> claimMember(String groupId, UserModel member,
-      {bool makeAdmin = false}) async {
-    final uid = _authService.currentAuthUid;
-    if (uid == null) return 'سجّل الدخول أولاً.';
-    try {
-      await _db.bindMemberAuthUid(groupId, member, uid);
-      if (makeAdmin) {
-        if (!member.isAdmin) {
-          await _db.updateMember(
-            groupId,
-            member.id,
-            (m) => m.copyWith(
-              isAdmin: true,
-              canManageMembers: true,
-              canManageBudgets: true,
-              canViewReports: true,
-              canAddExpenses: true,
-            ),
-          );
-        }
-        await _db.setGroupAdminId(groupId, member.id);
-      }
-      return null;
-    } catch (e) {
-      return 'تعذّرت الاستعادة: $e';
-    }
-  }
-
   Future<void> openMembership(FamilyMembership membership) async {
     var m = membership.member;
     // Self-heal: if this slot was found by email but its authUid is stale or
@@ -412,6 +322,17 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Replace the live session with a fully different member record — used
+  /// after changeJoinedMemberPhone, where the current user's OWN id/phone
+  /// just changed (their old member doc no longer exists), so the normal
+  /// refreshCurrentUser (which re-fetches by the now-stale old id) can't work.
+  Future<void> replaceCurrentUser(UserModel updated) async {
+    if (_group == null) return;
+    _user = updated;
+    await _db.saveActiveSession(updated, _group!);
+    notifyListeners();
+  }
+
   void setAdmin(bool admin) {
     _user = _user?.copyWith(
       isAdmin: admin,
@@ -431,6 +352,11 @@ class AuthProvider extends ChangeNotifier {
     try {
       await _authService.signOutFirebase();
     } catch (_) {}
+    // Web is a single-page app — the browser's address bar still carries
+    // whatever invite link (groupId/phone/invite/code) the tab was opened
+    // with. Left alone, the next auth screen re-reads it and re-shows the
+    // join flow for someone who already left. Reset it to the plain app URL.
+    clearInviteFromBrowserUrl();
     notifyListeners();
   }
 
@@ -444,6 +370,7 @@ class AuthProvider extends ChangeNotifier {
     _teamId = null;
     _teamOnly = false;
     await _db.clearActiveSession();
+    clearInviteFromBrowserUrl();
     notifyListeners();
   }
 }

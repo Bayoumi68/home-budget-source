@@ -16,9 +16,9 @@ import '../providers/budget_provider.dart';
 import '../providers/notification_provider.dart';
 import '../providers/avatar_provider.dart';
 import '../models/chat_message_model.dart';
+import '../models/resolved_expense.dart';
 import '../models/wallet_model.dart';
 import '../models/user_model.dart';
-import '../models/family_notification_model.dart';
 import '../services/voice_service.dart';
 import '../services/ai_service.dart';
 import '../services/database_service.dart';
@@ -26,6 +26,7 @@ import '../services/local_notice_service.dart';
 import 'member_detail_screen.dart';
 import '../utils/category_utils.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/expense_confirm_dialog.dart';
 import '../widgets/message_input.dart';
 import 'members_screen.dart';
 import 'group_settings_screen.dart';
@@ -215,8 +216,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _sendMessage(
-      [String? forcedText, bool skipMultiConfirm = false]) async {
+  Future<void> _sendMessage([String? forcedText]) async {
     if (_isSending) return;
     setState(() => _isSending = true);
     final text = (forcedText ?? _textController.text).trim();
@@ -371,58 +371,102 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    final multiExpenses = AIService.parseExpenseMessages(text);
-    final totalExpense = multiExpenses
-        .where((item) => item['isExpense'] == true)
-        .fold<double>(0, (sum, item) => sum + (item['amount'] as double));
-    if (!skipMultiConfirm && multiExpenses.length > 1) {
-      final ok = await _confirmMultipleExpenses(multiExpenses);
-      if (ok != true) {
-        _putTextInInput(text);
-        _lastSubmittedText = null;
-        _lastSubmittedAt = null;
-        if (mounted) setState(() => _isSending = false);
-        return;
-      }
-    }
-    // Teams are reporting rollups now — no per-expense team selection.
-    final selectedWallet =
-        totalExpense > 0 ? await _pickWalletForExpense(totalExpense) : null;
-    if (totalExpense > 0 && selectedWallet == _walletSelectionCancelled) {
-      _putTextInInput(text);
-      _lastSubmittedText = null;
-      _lastSubmittedAt = null;
-      if (mounted) setState(() => _isSending = false);
-      return;
-    }
-    // Hard limit: you can't spend more than the wallet holds.
-    if (totalExpense > 0 &&
-        selectedWallet != null &&
-        totalExpense > selectedWallet.balance + 0.005) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              'الرصيد غير كافٍ في ${selectedWallet.name}. المتاح ${selectedWallet.balance.toStringAsFixed(0)} ج.'),
-        ));
-      }
-      _putTextInInput(text);
-      _lastSubmittedText = null;
-      _lastSubmittedAt = null;
-      if (mounted) setState(() => _isSending = false);
-      return;
-    }
-
     final auth = context.read<AuthProvider>();
     if (auth.user == null) {
       if (mounted) setState(() => _isSending = false);
       return;
     }
 
-    // Admin plain-text routing: detect a member's name → direct message;
-    // otherwise ask (all / a member). Expenses and reports are not routed.
+    final chat = context.read<ChatProvider>();
+    List<ResolvedExpense> resolved;
+    try {
+      resolved = await chat.resolveExpenseMessages(
+        widget.groupId,
+        text,
+        auth.user!,
+        categories: context.read<BudgetProvider>().categories,
+      );
+    } catch (_) {
+      resolved = const [];
+    }
+
+    if (resolved.isNotEmpty) {
+      // Mandatory confirm-before-save: shows the FINAL resolved category for
+      // every item (even a single one) with a change-type control, so nothing
+      // saves silently.
+      final confirmedItems = await confirmResolvedExpenses(
+          context, resolved, context.read<BudgetProvider>().categories);
+      if (confirmedItems == null) {
+        _putTextInInput(text);
+        _lastSubmittedText = null;
+        _lastSubmittedAt = null;
+        if (mounted) setState(() => _isSending = false);
+        return;
+      }
+      resolved = confirmedItems;
+
+      final totalExpense = resolved
+          .where((r) => r.isExpense)
+          .fold<double>(0, (sum, r) => sum + r.amount);
+      // Teams are reporting rollups now — no per-expense team selection.
+      final selectedWallet =
+          totalExpense > 0 ? await _pickWalletForExpense(totalExpense) : null;
+      if (totalExpense > 0 && selectedWallet == _walletSelectionCancelled) {
+        _putTextInInput(text);
+        _lastSubmittedText = null;
+        _lastSubmittedAt = null;
+        if (mounted) setState(() => _isSending = false);
+        return;
+      }
+      // Hard limit: you can't spend more than the wallet holds.
+      if (totalExpense > 0 &&
+          selectedWallet != null &&
+          totalExpense > selectedWallet.balance + 0.005) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'الرصيد غير كافٍ في ${selectedWallet.name}. المتاح ${selectedWallet.balance.toStringAsFixed(0)} ج.'),
+          ));
+        }
+        _putTextInInput(text);
+        _lastSubmittedText = null;
+        _lastSubmittedAt = null;
+        if (mounted) setState(() => _isSending = false);
+        return;
+      }
+
+      _textController.clear();
+      setState(() => _lastParsedPreview = null);
+      final replyTo = _replyTo;
+      if (mounted) setState(() => _replyTo = null);
+      try {
+        final warning = await chat.commitResolvedExpenses(
+          widget.groupId,
+          auth.user!,
+          text,
+          resolved,
+          wallet: selectedWallet,
+          replyTo: replyTo,
+        );
+        await chat.refreshMessages(widget.groupId);
+        await context.read<BudgetProvider>().refreshData(widget.groupId);
+        await context.read<NotificationProvider>().load(widget.groupId);
+        await auth.refreshCurrentUser();
+        if (mounted && warning != null) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(warning)));
+        }
+      } finally {
+        if (mounted) setState(() => _isSending = false);
+      }
+      _scrollToBottom();
+      return;
+    }
+
+    // Nothing resolved as an expense/income: plain text, a report request, or
+    // (for the admin) a message that may need routing to a specific member.
     String? directTargetUserId;
-    if (totalExpense == 0 &&
-        auth.user!.isAdmin &&
+    if (auth.user!.isAdmin &&
         AIService.parseReportRequest(text) == null &&
         !AIService.isNextReportCommand(text)) {
       final isReplyToMember = _replyTo != null &&
@@ -451,12 +495,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final replyTo = _replyTo;
     if (mounted) setState(() => _replyTo = null);
     try {
-      final chat = context.read<ChatProvider>();
       final warning = await chat.sendTextMessage(
         widget.groupId,
         auth.user!,
         text,
-        wallet: selectedWallet,
         team: null,
         targetUserId: directTargetUserId,
         replyTo: replyTo,
@@ -619,16 +661,14 @@ class _ChatScreenState extends State<ChatScreen> {
           targetUserId: chatTarget,
         ));
         // Notify both parties (admin + the affected member).
-        await _db.addFamilyNotification(FamilyNotificationModel(
-          id: DateTime.now().microsecondsSinceEpoch.toString(),
-          groupId: widget.groupId,
+        await _db.notifyMultiple(
+          widget.groupId,
           title: 'حركة مالية',
           body: successMsg,
           actorId: user.id,
           actorName: user.name,
-          timestamp: DateTime.now(),
           targetUserIds: targets,
-        ));
+        );
       }
       if (!mounted) return;
       await context.read<NotificationProvider>().load(widget.groupId);
@@ -1025,31 +1065,20 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _recategorize(ChatMessage message) async {
-    final categories = context.read<BudgetProvider>().expenseCategories;
-    if (categories.isEmpty) return;
-    final chosen = await showDialog<String>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('اختر النوع الصحيح'),
-        children: [
-          for (final c in categories)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, c),
-              child: Text('${AppConstants.categoryIcons[c] ?? '📌'}  $c'),
-            ),
-        ],
-      ),
-    );
+    final categoryModels =
+        context.read<BudgetProvider>().categories.where((c) => !c.isIncome).toList();
+    if (categoryModels.isEmpty) return;
+    final chosen = await pickCategory(context, categoryModels);
     if (chosen == null || !mounted) return;
     await context
         .read<ChatProvider>()
-        .recategorizeExpense(widget.groupId, message, chosen);
+        .recategorizeExpense(widget.groupId, message, chosen.name);
     await context.read<BudgetProvider>().refreshData(widget.groupId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text(
-              'تم تغيير النوع إلى "$chosen" — وسيتعلّمه المساعد للمرة القادمة')),
+              'تم تغيير النوع إلى "${chosen.name}" — وسيتعلّمه المساعد للمرة القادمة')),
     );
   }
 
@@ -1398,52 +1427,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() => _isRecording = false);
   }
 
-  Future<bool?> _confirmMultipleExpenses(List<Map<String, dynamic>> items) {
-    final summary = _multipleExpenseSummary(items);
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('تأكيد ${items.length} مصروفات'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('سيتم تسجيل البنود التالية:'),
-            const SizedBox(height: 8),
-            SelectableText(summary, textDirection: ui.TextDirection.rtl),
-            const SizedBox(height: 12),
-            const Text('هل تريد حفظ كل بند كعملية منفصلة؟'),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('تعديل')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('نعم، سجّل الكل')),
-        ],
-      ),
-    );
-  }
-
-  String _multipleExpenseSummary(List<Map<String, dynamic>> items) {
-    final lines = <String>[];
-    for (var i = 0; i < items.length; i++) {
-      lines.add('${i + 1}) ${AIService.formatExpenseText(items[i])}');
-    }
-    final total = items
-        .where((item) => item['isExpense'] == true)
-        .fold<double>(0, (sum, item) => sum + (item['amount'] as double));
-    final totalText = total.truncateToDouble() == total
-        ? total.toStringAsFixed(0)
-        : total.toStringAsFixed(2);
-    lines.add('الإجمالي: $totalText ج');
-    return lines.join('\n');
-  }
-
   void _updateParsedPreview(String value) {
-    final parsedItems = AIService.parseExpenseMessages(value);
+    final parsedItems = AIService.parseExpenseMessages(value,
+        categories: context.read<BudgetProvider>().categories);
     if (parsedItems.length > 1) {
       final total = parsedItems
           .where((item) => item['isExpense'] == true)
@@ -1601,17 +1587,11 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             tooltip: 'التقارير',
             icon: const Icon(Icons.analytics_rounded),
-            onPressed: user?.canViewReports == true
-                ? () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) =>
-                              AnalyticsScreen(groupId: widget.groupId)),
-                    )
-                : () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('التقارير غير مفعلة لحسابك')),
-                    ),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => AnalyticsScreen(groupId: widget.groupId)),
+            ),
           ),
           PopupMenuButton<String>(
             tooltip: 'المزيد',
@@ -1701,7 +1681,9 @@ class _ChatScreenState extends State<ChatScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _SummaryItem(
-                  label: isMemberView ? 'مصروفاتي' : 'مصروفات العائلة',
+                  label: isMemberView
+                      ? 'مصروفاتي هذا الشهر'
+                      : 'مصروفات العائلة هذا الشهر',
                   amount: visibleExpenses,
                   color: AppTheme.expenseRed,
                   onTap: () => Navigator.push(

@@ -28,6 +28,17 @@ service cloud.firestore {
         || (request.auth != null && request.resource.data.authUid == request.auth.uid);
     }
 
+    // True if the caller is this family's admin. Lets the admin re-key a
+    // JOINED member's phone (changeJoinedMemberPhone creates the new member
+    // doc carrying that MEMBER's authUid, not the admin's own) — every other
+    // admin member-management action already works because it's an UPDATE
+    // that preserves the existing authUid (see authUidIsPreserved above);
+    // this specific operation is a CREATE of a brand-new doc id instead.
+    function isFamilyAdmin(groupId) {
+      return request.auth != null
+        && get(/databases/$(database)/documents/families/$(groupId)).data.adminId == request.auth.uid;
+    }
+
     // Collection-group login lookups. The app queries `members` by phone
     // (findMembershipsByPhone) and `teams` by memberIds (findTeamMembershipsByPhone)
     // across ALL families. In a collection-group query the parent {groupId} is
@@ -96,7 +107,7 @@ service cloud.firestore {
         allow read: if validGroupId(groupId);
         allow create: if validGroupId(groupId)
           && request.resource.data.id == memberId
-          && authUidMatchesSignedInUser();
+          && (authUidMatchesSignedInUser() || isFamilyAdmin(groupId));
         allow update: if validGroupId(groupId)
           && request.resource.data.id == memberId
           && authUidIsPreserved();
@@ -178,6 +189,17 @@ service cloud.firestore {
           && request.resource.data.ownerId is string
           && request.resource.data.memberIds is list;
         allow delete: if validGroupId(groupId);
+
+        // Team-scoped group chat: worker <-> worker <-> admin, isolated from
+        // the family's main `messages` feed by living under this team's path.
+        match /messages/{messageId} {
+          allow read: if validGroupId(groupId);
+          allow create, update: if validGroupId(groupId)
+            && request.resource.data.id == messageId
+            && request.resource.data.senderId is string
+            && request.resource.data.content is string;
+          allow delete: if validGroupId(groupId);
+        }
       }
 
       match /notifications/{notificationId} {

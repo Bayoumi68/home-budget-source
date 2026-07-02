@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import '../config/theme.dart';
 import '../config/constants.dart';
+import '../models/category_model.dart';
 import '../models/wallet_model.dart';
 import '../models/wallet_entry_model.dart';
 import '../providers/auth_provider.dart';
@@ -359,11 +360,24 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           byPhone: user?.phone,
         );
     if (!mounted) return;
+    final successMsg = withdraw
+        ? 'تم سحب ${amount.toStringAsFixed(0)} ج من ${wallet.name}'
+        : 'تم إيداع ${amount.toStringAsFixed(0)} ج في ${wallet.name}';
+    // A plain admin cash wallet has no owner to notify — only a member wallet
+    // (fund/withdraw on someone's own pocket) has a counterparty.
+    if (error == null && user != null && wallet.isMemberWallet && (wallet.ownerId ?? '').isNotEmpty) {
+      await _db.notifyMultiple(
+        widget.groupId,
+        title: 'حركة مالية',
+        body: successMsg,
+        actorId: user.id,
+        actorName: user.name,
+        targetUserIds: [user.id, wallet.ownerId!],
+      );
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(error ??
-          (withdraw
-              ? 'تم سحب ${amount.toStringAsFixed(0)} ج من ${wallet.name}'
-              : 'تم إيداع ${amount.toStringAsFixed(0)} ج في ${wallet.name}')),
+      content: Text(error ?? successMsg),
     ));
   }
 
@@ -483,79 +497,214 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
           byPhone: user?.phone,
         );
     if (!mounted) return;
+    final successMsg = withdraw
+        ? 'تم سحب ${amount.toStringAsFixed(0)} ج من ${memberWallet.name}'
+        : 'تم تمويل ${memberWallet.name} بـ ${amount.toStringAsFixed(0)} ج';
+    if (error == null && user != null && (memberWallet.ownerId ?? '').isNotEmpty) {
+      await _db.notifyMultiple(
+        widget.groupId,
+        title: 'حركة مالية',
+        body: successMsg,
+        actorId: user.id,
+        actorName: user.name,
+        targetUserIds: [user.id, memberWallet.ownerId!],
+      );
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(error ??
-          (withdraw
-              ? 'تم سحب ${amount.toStringAsFixed(0)} ج من ${memberWallet.name}'
-              : 'تم تمويل ${memberWallet.name} بـ ${amount.toStringAsFixed(0)} ج')),
+      content: Text(error ?? successMsg),
     ));
   }
+
+  static const _pickableIcons = [
+    '📌', '🍽️', '🚗', '🏠', '💡', '🚰', '🔥', '🌐', '📱', '📚',
+    '💊', '👕', '🧼', '🛠️', '🔌', '🧾', '🏛️', '🎮', '🎁', '💰',
+  ];
 
   Future<void> _showAddCategoryDialog() async {
     final nameController = TextEditingController();
     final limitController = TextEditingController();
+    final keywordsController = TextEditingController();
+    var selectedIcon = '📌';
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('إضافة نوع مصروف جديد'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              textDirection: ui.TextDirection.rtl,
-              decoration: const InputDecoration(
-                labelText: 'اسم النوع',
-                hintText: 'مثال: صيانة السيارة، مصروف محمد، علاج',
-                border: OutlineInputBorder(),
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('إضافة نوع مصروف جديد'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  textDirection: ui.TextDirection.rtl,
+                  decoration: const InputDecoration(
+                    labelText: 'اسم النوع',
+                    hintText: 'مثال: صيانة السيارة، مصروف محمد، علاج',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text('الأيقونة', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: _pickableIcons
+                      .map((icon) => ChoiceChip(
+                            label: Text(icon, style: const TextStyle(fontSize: 18)),
+                            selected: selectedIcon == icon,
+                            onSelected: (_) =>
+                                setDialogState(() => selectedIcon = icon),
+                          ))
+                      .toList(),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: keywordsController,
+                  textDirection: ui.TextDirection.rtl,
+                  decoration: const InputDecoration(
+                    labelText: 'كلمات مفتاحية اختيارية',
+                    hintText: 'مثال: بنزين، سولار، محطة (افصل بفاصلة)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'الكلمات المفتاحية تساعد المساعد يتعرف على النوع تلقائيًا من الشات.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: limitController,
+                  keyboardType: TextInputType.number,
+                  textDirection: ui.TextDirection.ltr,
+                  decoration: const InputDecoration(
+                    labelText: 'الحد الشهري اختياري',
+                    hintText: 'مثال: 1500',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'بعد الإضافة، لو كتبت اسم النوع في الشات سيتم ربط المصروف به بدل “أخرى”.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: limitController,
-              keyboardType: TextInputType.number,
-              textDirection: ui.TextDirection.ltr,
-              decoration: const InputDecoration(
-                labelText: 'الحد الشهري اختياري',
-                hintText: 'مثال: 1500',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'بعد الإضافة، لو كتبت اسم النوع في الشات سيتم ربط المصروف به بدل “أخرى”.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                if (name.isEmpty) return;
+                final keywords = keywordsController.text
+                    .split(RegExp(r'[،,]'))
+                    .map((w) => w.trim())
+                    .where((w) => w.isNotEmpty)
+                    .toList();
+                Navigator.pop(ctx, {
+                  'name': name,
+                  'icon': selectedIcon,
+                  'keywords': keywords,
+                  'limit': double.tryParse(limitController.text.trim()),
+                });
+              },
+              child: const Text('إضافة'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-          FilledButton(
-            onPressed: () {
-              final name = nameController.text.trim();
-              if (name.isEmpty) return;
-              Navigator.pop(ctx, {
-                'name': name,
-                'limit': double.tryParse(limitController.text.trim()),
-              });
-            },
-            child: const Text('إضافة'),
-          ),
-        ],
       ),
     );
     if (result == null) return;
     if (!mounted) return;
     final name = result['name'] as String;
     final limit = result['limit'] as double?;
+    final icon = result['icon'] as String?;
+    final keywords = result['keywords'] as List<String>?;
     final budgetProvider = context.read<BudgetProvider>();
-    await budgetProvider.addExpenseCategory(widget.groupId, name, limit: limit);
+    await budgetProvider.addExpenseCategory(widget.groupId, name,
+        limit: limit, icon: icon, keywords: keywords);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('تمت إضافة نوع المصروف: $name')),
     );
+  }
+
+  /// Edit an existing category's icon/keywords (Settings → tap the edit icon
+  /// on a category row). Name/limit stay unaffected — the "تحديد حد" button
+  /// already handles the limit.
+  Future<void> _editCategoryIconKeywords(CategoryModel category) async {
+    final keywordsController =
+        TextEditingController(text: category.keywords.join('، '));
+    var selectedIcon = category.icon;
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('تعديل ${category.name}'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: _pickableIcons
+                      .map((icon) => ChoiceChip(
+                            label: Text(icon, style: const TextStyle(fontSize: 18)),
+                            selected: selectedIcon == icon,
+                            onSelected: (_) =>
+                                setDialogState(() => selectedIcon = icon),
+                          ))
+                      .toList(),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: keywordsController,
+                  textDirection: ui.TextDirection.rtl,
+                  decoration: const InputDecoration(
+                    labelText: 'كلمات مفتاحية اختيارية',
+                    hintText: 'مثال: بنزين، سولار، محطة (افصل بفاصلة)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, {
+                'icon': selectedIcon,
+                'keywords': keywordsController.text
+                    .split(RegExp(r'[،,]'))
+                    .map((w) => w.trim())
+                    .where((w) => w.isNotEmpty)
+                    .toList(),
+              }),
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    final budgetProvider = context.read<BudgetProvider>();
+    await budgetProvider.updateCategoryIcon(
+        widget.groupId, category.id, result['icon'] as String);
+    await budgetProvider.updateCategoryKeywords(
+        widget.groupId, category.id, result['keywords'] as List<String>);
   }
 
   Future<void> _removeCategory(String category) async {
@@ -945,7 +1094,7 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                 : 'تجاوزت الحد بـ ${remaining.abs().toStringAsFixed(0)} ج';
             return Card(
               child: ListTile(
-                leading: Text(AppConstants.categoryIcons[cat] ?? '📌',
+                leading: Text(budget.categories.iconFor(cat),
                     style: const TextStyle(fontSize: 24)),
                 title: Text(cat),
                 subtitle: limit > 0
@@ -977,6 +1126,21 @@ class _GroupSettingsScreenState extends State<GroupSettingsScreen> {
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    IconButton(
+                      tooltip: 'تعديل الأيقونة/الكلمات المفتاحية',
+                      onPressed: budget.loading
+                          ? null
+                          : () {
+                              final model = budget.categories.firstWhere(
+                                (c) => c.name == cat,
+                                orElse: () => CategoryModel(
+                                    id: '', name: cat, icon: '📌'),
+                              );
+                              if (model.id.isEmpty) return;
+                              _editCategoryIconKeywords(model);
+                            },
+                      icon: const Icon(Icons.edit_outlined),
+                    ),
                     IconButton(
                       tooltip: 'إزالة النوع',
                       onPressed:

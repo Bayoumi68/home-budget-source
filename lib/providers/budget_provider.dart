@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import '../models/budget_model.dart';
+import '../models/category_model.dart';
 import '../models/transaction_model.dart';
 import '../models/wallet_model.dart';
 import '../services/database_service.dart';
-import '../config/constants.dart';
 import '../utils/category_utils.dart';
 
 class BudgetProvider extends ChangeNotifier {
@@ -12,14 +12,16 @@ class BudgetProvider extends ChangeNotifier {
   List<BudgetModel> _budgets = [];
   List<TransactionModel> _transactions = [];
   List<WalletModel> _wallets = [];
-  List<String> _expenseCategories = AppConstants.expenseCategories;
+  List<CategoryModel> _categories = [];
   bool _loading = false;
   bool _provisioned = false;
 
   List<BudgetModel> get budgets => _budgets;
   List<TransactionModel> get transactions => _transactions;
   List<WalletModel> get wallets => _wallets;
-  List<String> get expenseCategories => _expenseCategories;
+  List<CategoryModel> get categories => _categories;
+  List<String> get expenseCategories =>
+      _categories.where((c) => !c.isIncome).map((c) => c.name).toList();
   bool get loading => _loading;
 
   Iterable<TransactionModel> get _currentMonthTransactions =>
@@ -33,17 +35,22 @@ class BudgetProvider extends ChangeNotifier {
       .where((t) => !t.isExpense)
       .fold<double>(0.0, (sum, t) => sum + t.amount);
 
-  double get totalWalletBalance =>
-      _wallets.fold<double>(0.0, (sum, wallet) => sum + wallet.balance);
+  // The admin's own cash — wallets NOT owned by a specific member. A family
+  // member's (or worker's) wallet is THEIR asset, not the admin's; the admin
+  // can still monitor it via that member's/worker's own detail screen, it just
+  // doesn't count toward the admin's own total.
+  double get adminWalletBalance => _wallets
+      .where((w) => w.isAdminWallet)
+      .fold<double>(0.0, (sum, wallet) => sum + wallet.balance);
 
   double get balance =>
-      _wallets.isNotEmpty ? totalWalletBalance : totalIncome - totalExpenses;
+      _wallets.isNotEmpty ? adminWalletBalance : totalIncome - totalExpenses;
 
   Future<void> loadData(String groupId) async {
     _loading = true;
     notifyListeners();
     await _ensureProvisioned(groupId);
-    _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
+    _categories = await _db.getCategoriesSync(groupId);
     _budgets = await _db.getBudgetsSync(groupId);
     _transactions = await _db.getTransactionsSync(groupId);
     _wallets = await _db.getWalletsSync(groupId);
@@ -54,19 +61,21 @@ class BudgetProvider extends ChangeNotifier {
   Future<void> refreshData(String groupId) async {
     await _ensureProvisioned(groupId);
     _transactions = await _db.getTransactionsSync(groupId);
-    _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
+    _categories = await _db.getCategoriesSync(groupId);
     _budgets = await _db.getBudgetsSync(groupId);
     _wallets = await _db.getWalletsSync(groupId);
     notifyListeners();
   }
 
-  /// Make sure every member has their wallet — once per session, plus on demand
-  /// via [reprovisionWallets] when a new member is added.
+  /// Make sure every member has their wallet and the family's category
+  /// catalog is seeded — once per session, plus on demand via
+  /// [reprovisionWallets] when a new member is added.
   Future<void> _ensureProvisioned(String groupId) async {
     if (_provisioned) return;
     _provisioned = true;
     try {
       await _db.provisionMemberWallets(groupId);
+      await _db.ensureCategoriesSeeded(groupId);
     } catch (_) {
       _provisioned = false; // let a later refresh retry
     }
@@ -91,13 +100,20 @@ class BudgetProvider extends ChangeNotifier {
   }
 
   String _resolveDisplayCategory(TransactionModel t) {
+    // Fast path: an id match is exact and unambiguous (new transactions only).
+    if (t.categoryId != null && t.categoryId!.isNotEmpty) {
+      for (final c in _categories) {
+        if (c.id == t.categoryId) return c.name;
+      }
+    }
+    final names = expenseCategories;
     final directKey = CategoryUtils.key(t.category);
-    for (final cat in _expenseCategories) {
+    for (final cat in names) {
       if (CategoryUtils.key(cat) == directKey) return cat;
     }
 
     final combined = '${t.category} ${t.note ?? ''}';
-    final sorted = _expenseCategories
+    final sorted = names
         .where((c) =>
             c.trim().isNotEmpty &&
             CategoryUtils.key(c) != CategoryUtils.key('أخرى'))
@@ -119,7 +135,7 @@ class BudgetProvider extends ChangeNotifier {
     notifyListeners();
     try {
       await _db.setBudget(groupId, category, limit, period: period);
-      _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
+      _categories = await _db.getCategoriesSync(groupId);
       _budgets = await _db.getBudgetsSync(groupId);
       _wallets = await _db.getWalletsSync(groupId);
     } finally {
@@ -128,14 +144,21 @@ class BudgetProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> addExpenseCategory(String groupId, String category,
-      {double? limit}) async {
+  Future<void> addExpenseCategory(
+    String groupId,
+    String category, {
+    double? limit,
+    List<String>? keywords,
+    String? icon,
+    bool isIncome = false,
+  }) async {
     _loading = true;
     notifyListeners();
     try {
-      await _db.addExpenseCategory(groupId, category, limit: limit);
+      await _db.addExpenseCategory(groupId, category,
+          limit: limit, keywords: keywords, icon: icon, isIncome: isIncome);
       _transactions = await _db.getTransactionsSync(groupId);
-      _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
+      _categories = await _db.getCategoriesSync(groupId);
       _budgets = await _db.getBudgetsSync(groupId);
       _wallets = await _db.getWalletsSync(groupId);
     } finally {
@@ -150,13 +173,29 @@ class BudgetProvider extends ChangeNotifier {
     try {
       await _db.removeExpenseCategory(groupId, category);
       _transactions = await _db.getTransactionsSync(groupId);
-      _expenseCategories = await _db.getExpenseCategoriesSync(groupId);
+      _categories = await _db.getCategoriesSync(groupId);
       _budgets = await _db.getBudgetsSync(groupId);
       _wallets = await _db.getWalletsSync(groupId);
     } finally {
       _loading = false;
       notifyListeners();
     }
+  }
+
+  /// Update a category's icon (Settings edit action).
+  Future<void> updateCategoryIcon(
+      String groupId, String categoryId, String icon) async {
+    await _db.updateCategoryIcon(groupId, categoryId, icon);
+    _categories = await _db.getCategoriesSync(groupId);
+    notifyListeners();
+  }
+
+  /// Update a category's optional keyword/synonym list (Settings edit action).
+  Future<void> updateCategoryKeywords(
+      String groupId, String categoryId, List<String> keywords) async {
+    await _db.updateCategoryKeywords(groupId, categoryId, keywords);
+    _categories = await _db.getCategoriesSync(groupId);
+    notifyListeners();
   }
 
   Future<void> addWallet(

@@ -9,8 +9,10 @@ import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
 
 /// Opened from the chat header's "رصيد المحافظ" total. Lists every wallet the
-/// user may see (admin: cash sources + family-member wallets; member: only
-/// their own), each line tappable to expand/collapse its ledger movement.
+/// user may see (admin: cash sources ONLY — a family member's or worker's
+/// wallet is their own asset, not the admin's, and is monitored instead via
+/// that member's/team's own detail screen; member: only their own), each line
+/// tappable to expand/collapse its ledger movement.
 class WalletsOverviewScreen extends StatefulWidget {
   final String groupId;
   const WalletsOverviewScreen({super.key, required this.groupId});
@@ -32,6 +34,24 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
         key, () => _db.getWalletEntriesSync(widget.groupId, w.id));
   }
 
+  /// Self-heal on every pull-to-refresh: fold in any expense a wallet ledger
+  /// proves happened but whose transaction record never got saved. Admin
+  /// reconciles everyone at once; a member reconciles just their own wallet.
+  Future<void> _onRefresh(BudgetProvider budget) async {
+    final user = context.read<AuthProvider>().user;
+    if (user == null) return;
+    if (user.isAdmin) {
+      await _db.reconcileAllMemberWallets(widget.groupId);
+    } else {
+      for (final w in budget.wallets) {
+        if (w.isMemberWallet && w.ownerId == user.id) {
+          await _db.reconcileMemberWallet(widget.groupId, user, w);
+        }
+      }
+    }
+    await budget.refreshData(widget.groupId);
+  }
+
   @override
   Widget build(BuildContext context) {
     final budget = context.watch<BudgetProvider>();
@@ -40,8 +60,7 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
     final fmt = NumberFormat('#,##0');
 
     final wallets = (isAdmin
-            ? budget.wallets
-                .where((w) => w.isAdminWallet || w.isFamilyMemberWallet)
+            ? budget.wallets.where((w) => w.isAdminWallet)
             : budget.wallets
                 .where((w) => w.isMemberWallet && w.ownerId == user?.id))
         .toList()
@@ -57,7 +76,7 @@ class _WalletsOverviewScreenState extends State<WalletsOverviewScreen> {
       body: budget.loading && wallets.isEmpty
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: () => budget.refreshData(widget.groupId),
+              onRefresh: () => _onRefresh(budget),
               child: ListView(
                 padding: const EdgeInsets.all(12),
                 children: [

@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../config/theme.dart';
 import '../models/chat_message_model.dart';
-import '../models/family_notification_model.dart';
 import '../models/user_model.dart';
 import '../models/wallet_model.dart';
 import '../models/wallet_entry_model.dart';
@@ -215,11 +214,22 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
     await _load();
     if (!mounted) return;
     setState(() => _busy = false);
+    final successMsg = withdraw
+        ? 'تم سحب ${_money.format(amount)} ج'
+        : 'تم تمويل ${_member.name} بـ ${_money.format(amount)} ج';
+    if (error == null && admin != null) {
+      await _db.notifyMultiple(
+        widget.groupId,
+        title: 'حركة مالية',
+        body: successMsg,
+        actorId: admin.id,
+        actorName: admin.name,
+        targetUserIds: [admin.id, _member.id],
+      );
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(error ??
-          (withdraw
-              ? 'تم سحب ${_money.format(amount)} ج'
-              : 'تم تمويل ${_member.name} بـ ${_money.format(amount)} ج')),
+      content: Text(error ?? successMsg),
     ));
   }
 
@@ -347,16 +357,14 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
         targetUserId: _member.id,
       ));
       // Notify both the admin and the member of this message.
-      await _db.addFamilyNotification(FamilyNotificationModel(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        groupId: widget.groupId,
+      await _db.notifyMultiple(
+        widget.groupId,
         title: 'رسالة من ${admin.name}',
         body: text,
         actorId: admin.id,
         actorName: admin.name,
-        timestamp: DateTime.now(),
         targetUserIds: [admin.id, _member.id],
-      ));
+      );
       _msgController.clear();
       await _load();
       if (mounted) {

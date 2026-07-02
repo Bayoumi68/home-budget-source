@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../config/theme.dart';
-import '../config/constants.dart';
+import '../models/category_model.dart';
 import '../models/transaction_model.dart';
 import '../models/user_model.dart';
 import '../models/wallet_model.dart';
@@ -11,6 +11,7 @@ import '../models/wallet_entry_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
+import '../utils/period_utils.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   final String groupId;
@@ -23,7 +24,10 @@ class AnalyticsScreen extends StatefulWidget {
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
   final _db = DatabaseService();
   final _money = NumberFormat('#,###');
-  String _period = 'month';
+  // Default to full history, matching the wallet ledger cards (which are
+  // never period-filtered) — a 'month' default silently hid real data with
+  // no indicator why, reading as a bug.
+  String _period = 'all';
   DateTimeRange? _customRange;
   List<UserModel> _members = [];
   String? _memberFilterId; // admin: null = whole family, else a member
@@ -78,37 +82,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return total;
   }
 
-  DateTime get _start {
-    final now = DateTime.now();
-    switch (_period) {
-      case 'today':
-        return DateTime(now.year, now.month, now.day);
-      case 'week':
-        return DateTime(now.year, now.month, now.day)
-            .subtract(const Duration(days: 6));
-      case 'month':
-        return DateTime(now.year, now.month, 1);
-      case 'quarter':
-        return DateTime(now.year, now.month - 2, 1);
-      case 'all':
-        return DateTime(2000);
-      case 'custom':
-        final r = _customRange;
-        return r == null ? DateTime(2000) : r.start;
-      default:
-        return DateTime(now.year, now.month, 1);
-    }
-  }
-
-  DateTime get _end {
-    if (_period == 'custom' && _customRange != null) {
-      final e = _customRange!.end;
-      return DateTime(e.year, e.month, e.day, 23, 59, 59);
-    }
-    return DateTime.now();
-  }
-
-  bool _inPeriod(DateTime d) => !d.isBefore(_start) && !d.isAfter(_end);
+  DateTime get _start => PeriodUtils.start(_period, _customRange);
+  DateTime get _end => PeriodUtils.end(_period, _customRange);
+  bool _inPeriod(DateTime d) => PeriodUtils.inPeriod(d, _period, _customRange);
 
   @override
   Widget build(BuildContext context) {
@@ -144,29 +120,60 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         scopedWallets.fold<double>(0, (s, w) => s + w.balance);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('التقارير')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _topPickers(isAdmin),
-          const SizedBox(height: 12),
-          _summaryRow(isAdmin, funded, expenses, walletBalance),
-          const SizedBox(height: 16),
-          _collapsible('توزيع المصروفات', _categorySection(scopedTxns)),
-          if (isAdmin)
-            _collapsible('أرصدة ومصروفات الأعضاء',
-                _byMemberSection(budget.wallets, scopedTxns)),
-          if (isAdmin)
-            _collapsible(
-                'حسب المحفظة', _byWalletSection(budget.wallets, scopedTxns)),
-          _collapsible('المصروفات عبر الوقت', _trendSection(scopedTxns)),
-          if (isAdmin)
-            _collapsible('الميزانيات مقابل الفعلي', _budgetsSection(budget),
-                initiallyExpanded: false),
-          const SizedBox(height: 32),
+      appBar: AppBar(
+        title: const Text('التقارير'),
+        actions: [
+          IconButton(
+            tooltip: 'تحديث',
+            onPressed: () => _onRefresh(budget, user, isAdmin),
+            icon: const Icon(Icons.refresh_rounded),
+          ),
         ],
       ),
+      body: RefreshIndicator(
+        onRefresh: () => _onRefresh(budget, user, isAdmin),
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _topPickers(isAdmin),
+            const SizedBox(height: 12),
+            _summaryRow(isAdmin, funded, expenses, walletBalance),
+            const SizedBox(height: 16),
+            _collapsible('توزيع المصروفات', _categorySection(scopedTxns)),
+            if (isAdmin)
+              _collapsible('أرصدة ومصروفات الأعضاء',
+                  _byMemberSection(budget.wallets, scopedTxns)),
+            if (isAdmin)
+              _collapsible(
+                  'حسب المحفظة', _byWalletSection(budget.wallets, scopedTxns)),
+            _collapsible('المصروفات عبر الوقت', _trendSection(scopedTxns)),
+            if (isAdmin)
+              _collapsible('الميزانيات مقابل الفعلي', _budgetsSection(budget),
+                  initiallyExpanded: false),
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
     );
+  }
+
+  /// Self-heal on every refresh: fold in any expense a wallet ledger proves
+  /// happened but whose transaction record never got saved. Admin reconciles
+  /// everyone at once; a member reconciles just their own wallet.
+  Future<void> _onRefresh(
+      BudgetProvider budget, UserModel? user, bool isAdmin) async {
+    if (user != null) {
+      if (isAdmin) {
+        await _db.reconcileAllMemberWallets(widget.groupId);
+      } else {
+        for (final w in budget.wallets) {
+          if (w.isMemberWallet && w.ownerId == user.id) {
+            await _db.reconcileMemberWallet(widget.groupId, user, w);
+          }
+        }
+      }
+    }
+    await budget.refreshData(widget.groupId);
   }
 
   Widget _collapsible(String title, Widget child,
@@ -190,14 +197,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   // ─── Top pickers (period + member filter) ───
   Widget _topPickers(bool isAdmin) {
-    const periods = {
-      'today': 'اليوم',
-      'week': 'أسبوع',
-      'month': 'هذا الشهر',
-      'quarter': '٣ شهور',
-      'all': 'الكل',
-      'custom': 'مخصص',
-    };
+    const periods = PeriodUtils.labels;
     final members = _members.where((m) => !m.isAdmin).toList();
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -254,26 +254,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Future<void> _onPeriodChanged(String? v) async {
-    if (v == null) return;
-    if (v == 'custom') {
-      final now = DateTime.now();
-      final picked = await showDateRangePicker(
-        context: context,
-        firstDate: DateTime(2020),
-        lastDate: now,
-        initialDateRange: _customRange ??
-            DateTimeRange(
-                start: now.subtract(const Duration(days: 7)), end: now),
-      );
-      if (picked != null) {
-        setState(() {
-          _customRange = picked;
-          _period = 'custom';
-        });
-      }
-    } else {
-      setState(() => _period = v);
-    }
+    final r = await PeriodUtils.pickPeriod(context, v, _customRange);
+    if (r == null || !mounted) return;
+    setState(() {
+      _period = r.period;
+      _customRange = r.range;
+    });
   }
 
   // ─── Summary ───
@@ -311,6 +297,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   // ─── By category ───
   Widget _categorySection(List<TransactionModel> txns) {
+    final categories = context.read<BudgetProvider>().categories;
     final byCat = <String, double>{};
     for (final t in txns.where((t) => t.isExpense)) {
       final c = t.category.isEmpty ? 'أخرى' : t.category;
@@ -330,7 +317,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             margin: const EdgeInsets.only(bottom: 6),
             child: ListTile(
               dense: true,
-              leading: Text(AppConstants.categoryIcons[e.key] ?? '📌',
+              leading: Text(categories.iconFor(e.key),
                   style: const TextStyle(fontSize: 22)),
               title: Text(e.key),
               subtitle: LinearProgressIndicator(
@@ -622,7 +609,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('${AppConstants.categoryIcons[b.category] ?? '📌'} ${b.category}',
+                    Text('${budget.categories.iconFor(b.category)} ${b.category}',
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                     Text(
                       remaining >= 0

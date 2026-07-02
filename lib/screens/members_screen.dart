@@ -215,7 +215,6 @@ class _MembersScreenState extends State<MembersScreen> {
   String _permissionsText(UserModel member) {
     final permissions = <String>[];
     if (member.canAddExpenses) permissions.add('تسجيل مصاريف');
-    if (member.canViewReports) permissions.add('تقارير');
     if (member.canManageBudgets) permissions.add('ميزانيات');
     if (member.canManageMembers) permissions.add('أعضاء');
     return permissions.isEmpty ? 'بدون صلاحيات' : permissions.join('، ');
@@ -257,7 +256,6 @@ class _MembersScreenState extends State<MembersScreen> {
     final phoneController = TextEditingController();
     final limitController = TextEditingController();
     var canAddExpenses = true;
-    var canViewReports = true;
     var canManageBudgets = false;
     var canManageMembers = false;
 
@@ -316,11 +314,6 @@ class _MembersScreenState extends State<MembersScreen> {
                   onChanged: (v) => setDialogState(() => canAddExpenses = v),
                 ),
                 SwitchListTile(
-                  title: const Text('يشاهد التقارير'),
-                  value: canViewReports,
-                  onChanged: (v) => setDialogState(() => canViewReports = v),
-                ),
-                SwitchListTile(
                   title: const Text('يدير الميزانيات'),
                   value: canManageBudgets,
                   onChanged: (v) => setDialogState(() => canManageBudgets = v),
@@ -363,7 +356,6 @@ class _MembersScreenState extends State<MembersScreen> {
         isAdmin: false,
         monthlyLimit: double.tryParse(limitController.text.trim()) ?? 0,
         canAddExpenses: canAddExpenses,
-        canViewReports: canViewReports,
         canManageBudgets: canManageBudgets,
         canManageMembers: canManageMembers,
       );
@@ -434,7 +426,6 @@ class _MembersScreenState extends State<MembersScreen> {
 
   Future<void> _showPermissionsDialog(UserModel member) async {
     var canAddExpenses = member.canAddExpenses;
-    var canViewReports = member.canViewReports;
     var canManageBudgets = member.canManageBudgets;
     var canManageMembers = member.canManageMembers;
 
@@ -450,11 +441,6 @@ class _MembersScreenState extends State<MembersScreen> {
                 title: const Text('تسجيل المصاريف بالصوت/الكتابة'),
                 value: canAddExpenses,
                 onChanged: (v) => setDialogState(() => canAddExpenses = v),
-              ),
-              SwitchListTile(
-                title: const Text('عرض التقارير'),
-                value: canViewReports,
-                onChanged: (v) => setDialogState(() => canViewReports = v),
               ),
               SwitchListTile(
                 title: const Text('إدارة حدود الميزانية'),
@@ -485,7 +471,6 @@ class _MembersScreenState extends State<MembersScreen> {
         widget.groupId,
         member.id,
         canAddExpenses: canAddExpenses,
-        canViewReports: canViewReports,
         canManageBudgets: canManageBudgets,
         canManageMembers: canManageMembers,
       );

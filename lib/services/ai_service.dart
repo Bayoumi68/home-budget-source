@@ -1,3 +1,4 @@
+import '../models/category_model.dart';
 import '../utils/category_utils.dart';
 
 class AIService {
@@ -69,7 +70,10 @@ class AIService {
     return null;
   }
 
-  static Map<String, dynamic>? parseExpenseMessage(String text) {
+  static Map<String, dynamic>? parseExpenseMessage(
+    String text, {
+    required List<CategoryModel> categories,
+  }) {
     final original = text.trim();
     if (original.isEmpty) return null;
     // Intent-first: a money command (add/withdraw/transfer/limit) is never an
@@ -81,7 +85,8 @@ class AIService {
     if (amount == null || amount <= 0 || amount > 999999999) return null;
 
     final isIncome = _looksLikeIncome(normalized);
-    final detected = _detectCategory(normalized, isIncome: isIncome);
+    final detected =
+        _detectCategory(normalized, categories, isIncome: isIncome);
     final explicitLabel = isIncome ? null : _explicitExpenseLabel(normalized);
     final category = _chooseExpenseCategory(
       detected: detected,
@@ -98,7 +103,10 @@ class AIService {
     };
   }
 
-  static List<Map<String, dynamic>> parseExpenseMessages(String text) {
+  static List<Map<String, dynamic>> parseExpenseMessages(
+    String text, {
+    required List<CategoryModel> categories,
+  }) {
     final original = text.trim();
     if (original.isEmpty) return const [];
     // A money command is never an expense (intent-first).
@@ -110,7 +118,7 @@ class AIService {
         .where((m) => !_isQuantity(normalized, m))
         .toList();
     if (amountMatches.length <= 1) {
-      final single = parseExpenseMessage(original);
+      final single = parseExpenseMessage(original, categories: categories);
       return single == null ? const [] : [single];
     }
 
@@ -124,12 +132,12 @@ class AIService {
       );
       final segment = _trimSegment(normalized.substring(start, end));
       if (segment.isEmpty) continue;
-      final parsed = _parseAmountSegment(segment);
+      final parsed = _parseAmountSegment(segment, categories);
       if (parsed != null) parts.add(parsed);
     }
 
     if (parts.length >= 2) return parts;
-    final single = parseExpenseMessage(original);
+    final single = parseExpenseMessage(original, categories: categories);
     return single == null ? const [] : [single];
   }
 
@@ -182,13 +190,15 @@ class AIService {
         .trim();
   }
 
-  static Map<String, dynamic>? _parseAmountSegment(String segment) {
+  static Map<String, dynamic>? _parseAmountSegment(
+      String segment, List<CategoryModel> categories) {
     final normalized = _normalize(segment);
     final amount = _extractAmount(normalized);
     if (amount == null || amount <= 0 || amount > 999999999) return null;
 
     final isIncome = _looksLikeIncome(normalized);
-    final detected = _detectCategory(normalized, isIncome: isIncome);
+    final detected =
+        _detectCategory(normalized, categories, isIncome: isIncome);
     final explicitLabel = isIncome ? null : _explicitExpenseLabel(normalized);
     final category = _chooseExpenseCategory(
       detected: detected,
@@ -205,16 +215,17 @@ class AIService {
     };
   }
 
+  // Trust ANY keyword-detected category, not just an allow-listed subset.
+  // (Previously an allow-list excluded food/rent/electricity/water/gas,
+  // which is why those expenses fell back to raw leftover text instead of
+  // their canonical bucket name — that inconsistency is fixed here.)
   static String _chooseExpenseCategory({
     required String detected,
     required String? explicitLabel,
     required bool isIncome,
   }) {
     if (isIncome) return detected;
-    if (detected != 'أخرى' &&
-        _preferDetectedExpenseCategories.contains(detected)) {
-      return detected;
-    }
+    if (detected != 'أخرى') return detected;
     return explicitLabel ?? detected;
   }
 
@@ -336,18 +347,21 @@ class AIService {
         !_expenseOnlyKeywords.any(normalized.contains);
   }
 
-  static String _detectCategory(String normalized, {required bool isIncome}) {
-    final categories = isIncome ? _incomeCategories : _expenseCategories;
+  static String _detectCategory(
+    String normalized,
+    List<CategoryModel> categories, {
+    required bool isIncome,
+  }) {
+    final relevant = categories.where((c) => c.isIncome == isIncome);
     final tokens = normalized
         .split(RegExp(r'\s+'))
         .where((t) => t.length >= 2)
         .toList();
     String best = 'أخرى';
     int bestScore = 0;
-    for (final item in categories) {
-      final keywords = item['keywords'] as List<String>;
+    for (final item in relevant) {
       var score = 0;
-      for (final kw in keywords) {
+      for (final kw in item.keywords) {
         if (normalized.contains(kw)) {
           // Direct hit; multi-word and longer keywords are more specific.
           score += kw.contains(' ') ? 3 : 2;
@@ -364,7 +378,7 @@ class AIService {
       }
       if (score > bestScore) {
         bestScore = score;
-        best = item['category'] as String;
+        best = item.name;
       }
     }
     return best;
@@ -707,428 +721,9 @@ class AIService {
     'خصم',
   ];
 
-  static const _preferDetectedExpenseCategories = {
-    'مواصلات',
-    'تعليم',
-    'صحة',
-    'اتصالات',
-    'إنترنت',
-    'ملابس',
-    'منظفات',
-    'صيانة',
-    'أجهزة منزلية',
-    'اشتراكات',
-    'رسوم وخدمات',
-    'ترفيه',
-    'هدايا',
-  };
-
-  static const List<Map<String, Object>> _expenseCategories = [
-    {
-      'category': 'أكل ومشروبات',
-      'keywords': [
-        'سوبر ماركت',
-        'سوبر',
-        'بقاله',
-        'بقالة',
-        'اكل',
-        'أكل',
-        'مطعم',
-        'اكل بيت',
-        'طلبات',
-        'دليفري',
-        'كشري',
-        'فول',
-        'طعمية',
-        'جبنة',
-        'لبن',
-        'زبادي',
-        'رز',
-        'مكرونة',
-        'سكر',
-        'زيت',
-        'شاي',
-        'قهوة',
-        'كافيه',
-        'قهوه',
-        'تموين',
-        'جمعيه',
-        'جمعية',
-        'هايبر',
-        'ماركت',
-        'جبنه',
-        'جبنة',
-        'بيض',
-        'لانشون',
-        'عسل',
-        'مربى',
-        'مربي',
-        'بطاطس',
-        'طماطم',
-        'بصل',
-        'رز',
-        'ارز',
-        'مكرونه',
-        'مكرونة',
-        'بقوليات',
-        'عدس',
-        'فول',
-        'سكر',
-        'زيت',
-        'دقيق',
-        'لبن',
-        'زبادي',
-        'مياه معدنيه',
-        'مياه معدنية',
-        'خضار',
-        'فاكهة',
-        'فواكه',
-        'فراخ',
-        'دجاج',
-        'لحمه',
-        'لحمة',
-        'سمك',
-        'عيش',
-      ],
-    },
-    {
-      'category': 'مواصلات',
-      'keywords': [
-        'مواصلات',
-        'مواصله',
-        'مواصلة',
-        'مشوار',
-        'مشاوير',
-        'بنزين',
-        'سولار',
-        'باص',
-        'اتوبيس',
-        'أتوبيس',
-        'ميكروباص',
-        'تاكسي',
-        'اوبر',
-        'أوبر',
-        'وبر',
-        'uber',
-        'كريم',
-        'ديدي',
-        'اندرايف',
-        'inDrive',
-        'توكتوك',
-        'توك توك',
-        'مترو',
-        'قطر',
-        'قطار',
-        'تذكرة',
-        'تذكره',
-        'جراج',
-        'ركنة',
-        'ركنه',
-        'موقف',
-        'كارته',
-        'كارتة',
-        'طريق',
-        'نفق',
-        'كوبري',
-        'كوبريه',
-      ],
-    },
-    {
-      'category': 'إيجار',
-      'keywords': [
-        'ايجار',
-        'إيجار',
-        'شقه',
-        'شقة',
-        'سكن',
-        'البيت',
-        'الشقة',
-        'عقار',
-        'عمارة',
-        'بواب',
-        'حارس',
-        'اتحاد ملاك'
-      ],
-    },
-    {
-      'category': 'كهرباء',
-      'keywords': [
-        'كهربا',
-        'كهرباء',
-        'نور',
-        'عداد كهربا',
-        'فاتورة كهربا',
-        'شحن كارت الكهرباء',
-        'كارت الكهرباء'
-      ],
-    },
-    {
-      'category': 'مياه',
-      'keywords': ['مياه', 'ميه', 'فاتورة مياه', 'عداد مياه'],
-    },
-    {
-      'category': 'غاز',
-      'keywords': ['غاز', 'فاتورة غاز', 'أنبوبة', 'انبوبة', 'بوتاجاز'],
-    },
-    {
-      'category': 'إنترنت',
-      'keywords': [
-        'انترنت',
-        'إنترنت',
-        'نت',
-        'واي فاي',
-        'راوتر',
-        'باقه نت',
-        'باقة نت',
-        'اشتراك النت'
-      ],
-    },
-    {
-      'category': 'اتصالات',
-      'keywords': [
-        'تليفون',
-        'موبايل',
-        'رصيد',
-        'كارت شحن',
-        'شحن',
-        'باقه',
-        'باقة',
-        'فودافون',
-        'اتصالات',
-        'اورنج',
-        'شركة وي',
-        'we',
-      ],
-    },
-    {
-      'category': 'تعليم',
-      'keywords': [
-        'مدرسه',
-        'مدرسة',
-        'مصاريف مدرسه',
-        'مصاريف مدرسة',
-        'جامعه',
-        'جامعة',
-        'دروس',
-        'درس',
-        'مدرس',
-        'مدرس خصوصي',
-        'مدرسين',
-        'مستر',
-        'حضانة',
-        'حضانه',
-        'سنتر',
-        'كورس',
-        'كتب',
-        'مذكرة',
-        'مذكره',
-        'كراسة',
-        'كراسه',
-        'قلم'
-      ],
-    },
-    {
-      'category': 'صحة',
-      'keywords': [
-        'دكتور',
-        'مستشفى',
-        'مستشفي',
-        'علاج',
-        'دواء',
-        'دوا',
-        'ادويه',
-        'أدوية',
-        'صيدليه',
-        'الصيدليه',
-        'صيديليه',
-        'الصيديليه',
-        'صيدلية',
-        'صيدلي',
-        'روشته',
-        'روشتة',
-        'تحاليل',
-        'تحليل',
-        'اشعه',
-        'أشعة',
-        'اسنان',
-        'أسنان',
-        'نظارة',
-        'نضارة',
-        'كشف'
-      ],
-    },
-    {
-      'category': 'ملابس',
-      'keywords': [
-        'ملابس',
-        'هدوم',
-        'تيشيرت',
-        'بنطلون',
-        'حذاء',
-        'كوتشي',
-        'جزمه',
-        'جزمة'
-      ],
-    },
-    {
-      'category': 'منظفات',
-      'keywords': [
-        'منظفات',
-        'مسحوق',
-        'مسحوق غسيل',
-        'برسيل',
-        'اريال',
-        'تايد',
-        'كلور',
-        'ديتول',
-        'صابون',
-        'شاور',
-        'شامبو',
-        'معجون',
-        'فرشة',
-        'فوط',
-        'مناديل',
-        'ورق تواليت',
-        'سائل مواعين',
-        'مواعين',
-        'مطهر',
-        'ملمع',
-        'مكنسه',
-        'مقشة'
-      ],
-    },
-    {
-      'category': 'صيانة',
-      'keywords': [
-        'صيانة',
-        'تصليح',
-        'سباك',
-        'كهربائي',
-        'نجار',
-        'نقاش',
-        'محارة',
-        'دهان',
-        'بوية',
-        'مواسير',
-        'حنفية',
-        'صرف',
-        'تسليك',
-        'قفل',
-        'مفتاح',
-        'تركيب',
-        'قطع غيار',
-        'ميكانيكي',
-        'كاوتش',
-        'زيت عربيه',
-        'زيت عربية'
-      ],
-    },
-    {
-      'category': 'أجهزة منزلية',
-      'keywords': [
-        'جهاز',
-        'اجهزه',
-        'أجهزة',
-        'تلاجة',
-        'ثلاجه',
-        'غسالة',
-        'غساله',
-        'بوتاجاز',
-        'مروحة',
-        'مروحه',
-        'مكيف',
-        'تكييف',
-        'خلاط',
-        'مكواه',
-        'مكواة',
-        'لمبة',
-        'لمبه',
-        'مشترك',
-        'فيشة',
-        'فيشه',
-        'شاحن',
-        'كابل'
-      ],
-    },
-    {
-      'category': 'اشتراكات',
-      'keywords': [
-        'اشتراك',
-        'اشتراكات',
-        'نادي',
-        'جيم',
-        'نتفلكس',
-        'شاهد',
-        'يوتيوب',
-        'سبوتيفاي',
-        'برنامج',
-        'تطبيق',
-        'عضويه',
-        'عضوية'
-      ],
-    },
-    {
-      'category': 'رسوم وخدمات',
-      'keywords': [
-        'رسوم',
-        'خدمات',
-        'ضريبة',
-        'ضريبه',
-        'مخالفة',
-        'مخالفه',
-        'غرامة',
-        'غرامه',
-        'دمغة',
-        'دمغه',
-        'استخراج',
-        'شهادة',
-        'شهاده',
-        'بطاقة',
-        'بطاقه',
-        'جواز',
-        'رخصة',
-        'رخصه',
-        'بريد',
-        'تحويل',
-        'عمولة',
-        'عموله'
-      ],
-    },
-    {
-      'category': 'ترفيه',
-      'keywords': [
-        'سينما',
-        'خروج',
-        'لعب',
-        'ملاهي',
-        'فسحة',
-        'فسحه',
-        'رحله',
-        'رحلة'
-      ],
-    },
-    {
-      'category': 'هدايا',
-      'keywords': ['هديه', 'هدية', 'عيد ميلاد', 'عزومة', 'عزومه'],
-    },
-  ];
-
-  static const List<Map<String, Object>> _incomeCategories = [
-    {
-      'category': 'راتب',
-      'keywords': ['راتب', 'مرتب', 'قبض'],
-    },
-    {
-      'category': 'عمل حر',
-      'keywords': ['فريلانس', 'عمل حر', 'شغل', 'عموله', 'عمولة'],
-    },
-    {
-      'category': 'هدية',
-      'keywords': ['هديه', 'هدية'],
-    },
-    {
-      'category': 'استثمار',
-      'keywords': ['استثمار', 'ارباح', 'أرباح', 'فوائد'],
-    },
-  ];
+  // NOTE: the old hardcoded _expenseCategories/_incomeCategories keyword
+  // tables (and the _preferDetectedExpenseCategories allow-list gate that
+  // caused inconsistent categorization) have been removed — see
+  // lib/data/category_seeds.dart, which is the seeded, per-family-editable
+  // replacement now passed into _detectCategory via the `categories` param.
 }

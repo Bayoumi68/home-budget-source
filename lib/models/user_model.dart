@@ -8,7 +8,6 @@ class UserModel {
   final double monthlyLimit;
   final double currentSpending;
   final bool canAddExpenses;
-  final bool canViewReports;
   final bool canManageMembers;
   final bool canManageBudgets;
   final bool phoneVerified;
@@ -29,7 +28,6 @@ class UserModel {
     this.monthlyLimit = 0,
     this.currentSpending = 0,
     bool? canAddExpenses,
-    bool? canViewReports,
     bool? canManageMembers,
     bool? canManageBudgets,
     this.phoneVerified = false,
@@ -37,7 +35,6 @@ class UserModel {
     this.teamId,
     DateTime? createdAt,
   })  : canAddExpenses = canAddExpenses ?? true,
-        canViewReports = canViewReports ?? true,
         canManageMembers = canManageMembers ?? isAdmin,
         canManageBudgets = canManageBudgets ?? isAdmin,
         createdAt = createdAt ?? DateTime.now();
@@ -67,7 +64,6 @@ class UserModel {
         'monthlyLimit': monthlyLimit,
         'currentSpending': currentSpending,
         'canAddExpenses': canAddExpenses,
-        'canViewReports': canViewReports,
         'canManageMembers': canManageMembers,
         'canManageBudgets': canManageBudgets,
         'phoneVerified': phoneVerified,
@@ -88,7 +84,6 @@ class UserModel {
       monthlyLimit: (map['monthlyLimit'] as num?)?.toDouble() ?? 0,
       currentSpending: (map['currentSpending'] as num?)?.toDouble() ?? 0,
       canAddExpenses: map['canAddExpenses'] ?? true,
-      canViewReports: map['canViewReports'] ?? true,
       canManageMembers: map['canManageMembers'] ?? isAdmin,
       canManageBudgets: map['canManageBudgets'] ?? isAdmin,
       phoneVerified: map['phoneVerified'] ?? false,
@@ -108,7 +103,6 @@ class UserModel {
     double? monthlyLimit,
     double? currentSpending,
     bool? canAddExpenses,
-    bool? canViewReports,
     bool? canManageMembers,
     bool? canManageBudgets,
     bool? phoneVerified,
@@ -126,7 +120,6 @@ class UserModel {
         monthlyLimit: monthlyLimit ?? this.monthlyLimit,
         currentSpending: currentSpending ?? this.currentSpending,
         canAddExpenses: canAddExpenses ?? this.canAddExpenses,
-        canViewReports: canViewReports ?? this.canViewReports,
         canManageMembers: canManageMembers ?? this.canManageMembers,
         canManageBudgets: canManageBudgets ?? this.canManageBudgets,
         phoneVerified: phoneVerified ?? this.phoneVerified,

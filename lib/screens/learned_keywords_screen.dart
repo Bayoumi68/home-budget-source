@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import '../config/constants.dart';
+import 'package:provider/provider.dart';
 import '../config/theme.dart';
+import '../models/category_model.dart';
+import '../providers/budget_provider.dart';
 import '../services/database_service.dart';
 
 /// Admin review of what the parser has LEARNED: each word it now maps to an
@@ -61,6 +63,7 @@ class _LearnedKeywordsScreenState extends State<LearnedKeywordsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final categories = context.watch<BudgetProvider>().categories;
     return Scaffold(
       appBar: AppBar(title: const Text('الكلمات المتعلَّمة')),
       body: _loading
@@ -84,8 +87,7 @@ class _LearnedKeywordsScreenState extends State<LearnedKeywordsScreen> {
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, i) {
                       final e = _items[i];
-                      final icon =
-                          AppConstants.categoryIcons[e['category']] ?? '📌';
+                      final icon = categories.iconFor(e['category'] ?? '');
                       return ListTile(
                         leading: Text(icon,
                             style: const TextStyle(fontSize: 22)),

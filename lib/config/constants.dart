@@ -3,10 +3,10 @@ class AppConstants {
   static const String appWebLink = 'https://home-budgets.web.app';
   static const String androidDownloadLink =
       'https://home-budgets.web.app/download.html';
-  static const String appVersion = '0.5.52-update-notice';
+  static const String appVersion = '0.5.70-refresh-self-heals-reports';
   // Monotonic build number, kept in sync with pubspec (+NNNN). Used to detect a
   // newer release via appConfig/latest. BUMP THIS with every release.
-  static const int appBuild = 2052;
+  static const int appBuild = 2070;
   // TESTING: when true, phone-auth uses Firebase's app-verification-disabled
   // mode + test phone numbers — no reCAPTCHA image puzzle, no real SMS. This
   // applies to release/deployed builds too, so the family can test now. Set to
@@ -18,60 +18,4 @@ class AppConstants {
   static const int maxFamilyMembers = 10;
   static const int maxMessageLength = 500;
   static const Duration voiceMaxDuration = Duration(seconds: 30);
-
-  static const List<String> expenseCategories = [
-    'أكل ومشروبات',
-    'مواصلات',
-    'إيجار',
-    'كهرباء',
-    'مياه',
-    'غاز',
-    'إنترنت',
-    'اتصالات',
-    'تعليم',
-    'صحة',
-    'ملابس',
-    'منظفات',
-    'صيانة',
-    'أجهزة منزلية',
-    'اشتراكات',
-    'رسوم وخدمات',
-    'ترفيه',
-    'هدايا',
-    'أخرى',
-  ];
-
-  static const List<String> incomeCategories = [
-    'راتب',
-    'عمل حر',
-    'هدية',
-    'استثمار',
-    'أخرى',
-  ];
-
-  static const Map<String, String> categoryIcons = {
-    'أكل ومشروبات': '🍽️',
-    'مواصلات': '🚗',
-    'إيجار': '🏠',
-    'كهرباء': '💡',
-    'مياه': '🚰',
-    'غاز': '🔥',
-    'إنترنت': '🌐',
-    'اتصالات': '📱',
-    'تعليم': '📚',
-    'صحة': '💊',
-    'ملابس': '👕',
-    'منظفات': '🧼',
-    'صيانة': '🛠️',
-    'أجهزة منزلية': '🔌',
-    'اشتراكات': '🧾',
-    'رسوم وخدمات': '🏛️',
-    'ترفيه': '🎮',
-    'هدايا': '🎁',
-    'أخرى': '📌',
-    'راتب': '💰',
-    'عمل حر': '💼',
-    'هدية': '🎀',
-    'استثمار': '📈',
-  };
 }

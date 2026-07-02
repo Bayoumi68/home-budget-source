@@ -5,13 +5,15 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/constants.dart';
 import '../config/theme.dart';
-import '../models/family_notification_model.dart';
 import '../models/team_model.dart';
 import '../models/transaction_model.dart';
 import '../models/user_model.dart';
+import '../models/wallet_entry_model.dart';
 import '../models/wallet_model.dart';
 import '../providers/auth_provider.dart';
 import '../services/database_service.dart';
+import '../widgets/wallet_ledger_table.dart';
+import 'team_chat_screen.dart';
 
 class TeamsScreen extends StatefulWidget {
   final String groupId;
@@ -30,6 +32,23 @@ class _TeamsScreenState extends State<TeamsScreen> {
   List<TeamModel> _teams = [];
   List<WalletModel> _wallets = [];
   final Map<String, List<TransactionModel>> _teamTxns = {};
+  // Ledger expand/collapse + fetch cache — same pattern as the family-member
+  // wallet view in group_settings_screen.dart / wallets_overview_screen.dart.
+  final Set<String> _expandedWorkers = {};
+  final Map<String, Future<List<WalletEntryModel>>> _entryFutures = {};
+
+  Future<List<WalletEntryModel>> _entriesFor(WalletModel w) {
+    final key = '${w.id}|${w.updatedAt?.toIso8601String() ?? ''}|${w.balance}';
+    return _entryFutures.putIfAbsent(
+        key, () => _db.getWalletEntriesSync(widget.groupId, w.id));
+  }
+
+  WalletModel? _walletFor(String memberId) {
+    for (final w in _wallets) {
+      if (w.isMemberWallet && w.ownerId == memberId) return w;
+    }
+    return null;
+  }
 
   /// A worker's own wallet balance (a team is a rollup of these).
   double _memberBalance(String memberId) {
@@ -58,6 +77,9 @@ class _TeamsScreenState extends State<TeamsScreen> {
       final auth = context.read<AuthProvider>();
       final user = auth.user;
       await _db.provisionMemberWallets(widget.groupId);
+      // Self-heal: fold in any worker (or family member) transaction that a
+      // ledger entry proves exists but never got saved, before loading data.
+      await _db.reconcileAllMemberWallets(widget.groupId);
       final members = await _db.getMembersSync(widget.groupId);
       final wallets = await _db.getWalletsSync(widget.groupId);
       final teams = user == null
@@ -184,9 +206,12 @@ class _TeamsScreenState extends State<TeamsScreen> {
   Widget _buildTeamCard(TeamModel team) {
     final txns = _teamTxns[team.id] ?? const <TransactionModel>[];
     final spent = _db.spentForTeam(txns);
+    // Keyed by userId, not userName: a worker's rename must not split their
+    // history into two buckets (userName on a transaction is a point-in-time
+    // snapshot, unlike the always-current UserModel used to display it).
     final byMember = <String, double>{};
     for (final txn in txns.where((t) => t.isExpense)) {
-      byMember[txn.userName] = (byMember[txn.userName] ?? 0) + txn.amount;
+      byMember[txn.userId] = (byMember[txn.userId] ?? 0) + txn.amount;
     }
     final canManage = _canManageTeam(team);
 
@@ -216,57 +241,31 @@ class _TeamsScreenState extends State<TeamsScreen> {
                 )
               ];
             }
-            return workers.map((w) {
-              final memberSpent = byMember[w.name] ?? 0;
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                leading: const Icon(Icons.engineering_rounded),
-                title: Text(w.name),
-                subtitle: Text('صرف: ${_money.format(memberSpent)} ج'
-                    '${(w.phone ?? '').isEmpty ? '' : ' — ${w.phone}'}'
-                    '${(w.email ?? '').isEmpty ? '' : '\n${w.email}'}'),
-                isThreeLine: (w.email ?? '').isNotEmpty,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('الرصيد ${_money.format(_memberBalance(w.id))} ج',
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    if (canManage)
-                      PopupMenuButton<String>(
-                        onSelected: (v) {
-                          if (v == 'fund') _fundWorker(team, w, withdraw: false);
-                          if (v == 'withdraw') {
-                            _fundWorker(team, w, withdraw: true);
-                          }
-                          if (v == 'edit') _editWorker(team, w);
-                          if (v == 'invite') _inviteWorker(team, w);
-                          if (v == 'remove') _removeWorker(team, w);
-                        },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'fund', child: Text('تمويل')),
-                          PopupMenuItem(value: 'withdraw', child: Text('سحب')),
-                          PopupMenuItem(
-                              value: 'edit', child: Text('تعديل البيانات')),
-                          PopupMenuItem(
-                              value: 'invite', child: Text('دعوة للدخول')),
-                          PopupMenuItem(value: 'remove', child: Text('إزالة')),
-                        ],
-                      ),
-                  ],
-                ),
-                onTap: () => _showMemberTeamDetails(team, w.name),
-              );
-            }).toList();
+            return workers.map((w) => _workerLedgerLine(team, w, byMember, canManage))
+                .toList();
           })(),
           const Divider(height: 24),
           _buildTransactionsSection(team, txns, canManage),
-          if (canManage) ...[
-            const Divider(height: 24),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
+          const Divider(height: 24),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => TeamChatScreen(
+                      groupId: widget.groupId,
+                      teamId: team.id,
+                      teamName: team.name,
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.chat_bubble_rounded),
+                label: const Text('محادثة الفريق'),
+              ),
+              if (canManage) ...[
                 OutlinedButton.icon(
                   onPressed: () => _addWorkerDialog(team),
                   icon: const Icon(Icons.person_add_alt_1_rounded),
@@ -285,19 +284,115 @@ class _TeamsScreenState extends State<TeamsScreen> {
                   label: const Text('حذف الفريق'),
                 ),
               ],
-            ),
-          ],
+            ],
+          ),
         ],
       ),
     );
   }
 
-  /// Edit a worker's name (always) and phone (only while still pending — once
-  /// the worker has joined, the phone is locked, same rule as family members).
+  /// A worker's row: name/contact + balance + admin actions, expandable in
+  /// place to the same DR/CR ledger table family members already get.
+  Widget _workerLedgerLine(TeamModel team, UserModel w,
+      Map<String, double> byMember, bool canManage) {
+    final memberSpent = byMember[w.id] ?? 0;
+    final expanded = _expandedWorkers.contains(w.id);
+    final wallet = _walletFor(w.id);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() {
+            if (expanded) {
+              _expandedWorkers.remove(w.id);
+            } else {
+              _expandedWorkers.add(w.id);
+            }
+          }),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                const Icon(Icons.engineering_rounded),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(w.name,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(
+                        'صرف: ${_money.format(memberSpent)} ج'
+                        '${(w.phone ?? '').isEmpty ? '' : ' — ${w.phone}'}'
+                        '${(w.email ?? '').isEmpty ? '' : '\n${w.email}'}',
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                ),
+                Text('الرصيد ${_money.format(_memberBalance(w.id))} ج',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                if (canManage)
+                  PopupMenuButton<String>(
+                    onSelected: (v) {
+                      if (v == 'fund') _fundWorker(team, w, withdraw: false);
+                      if (v == 'withdraw') _fundWorker(team, w, withdraw: true);
+                      if (v == 'edit') _editWorker(team, w);
+                      if (v == 'permissions') _showWorkerPermissionsDialog(w);
+                      if (v == 'invite') _inviteWorker(team, w);
+                      if (v == 'remove') _removeWorker(team, w);
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'fund', child: Text('تمويل')),
+                      PopupMenuItem(value: 'withdraw', child: Text('سحب')),
+                      PopupMenuItem(
+                          value: 'edit', child: Text('تعديل البيانات')),
+                      PopupMenuItem(
+                          value: 'permissions', child: Text('الصلاحيات')),
+                      PopupMenuItem(
+                          value: 'invite', child: Text('دعوة للدخول')),
+                      PopupMenuItem(value: 'remove', child: Text('إزالة')),
+                    ],
+                  ),
+                Icon(expanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded),
+              ],
+            ),
+          ),
+        ),
+        if (expanded)
+          wallet == null
+              ? const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text('محفظة العامل غير جاهزة بعد.'),
+                )
+              : FutureBuilder<List<WalletEntryModel>>(
+                  future: _entriesFor(wallet),
+                  builder: (ctx, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: LinearProgressIndicator(minHeight: 2),
+                      );
+                    }
+                    return buildWalletLedgerTable(
+                        snap.data ?? const <WalletEntryModel>[]);
+                  },
+                ),
+        const Divider(height: 1),
+      ],
+    );
+  }
+
+  /// Edit a worker's name and phone. A pending worker's phone re-keys freely;
+  /// a JOINED worker's phone can also be changed now, but it migrates their
+  /// real identity (transactions, notifications, team chat) — confirmed
+  /// separately below before saving.
   Future<void> _editWorker(TeamModel team, UserModel w) async {
     final nameC = TextEditingController(text: w.name);
     final phoneC = TextEditingController(text: w.phone ?? '');
-    final canEditPhone = !w.joined;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -313,14 +408,13 @@ class _TeamsScreenState extends State<TeamsScreen> {
             const SizedBox(height: 12),
             TextField(
               controller: phoneC,
-              enabled: canEditPhone,
               keyboardType: TextInputType.phone,
               decoration: InputDecoration(
                 labelText: 'رقم الهاتف',
                 border: const OutlineInputBorder(),
-                helperText: canEditPhone
-                    ? 'يمكن تعديله قبل انضمام العامل فقط'
-                    : 'ثابت بعد انضمام العامل',
+                helperText: w.joined
+                    ? 'العامل انضم بالفعل — تغيير الرقم سينقل بياناته للرقم الجديد'
+                    : 'العامل لم ينضم بعد — يمكن تعديله بحرية',
               ),
             ),
             if ((w.email ?? '').isNotEmpty) ...[
@@ -349,14 +443,71 @@ class _TeamsScreenState extends State<TeamsScreen> {
     phoneC.dispose();
     if (ok != true || !mounted) return;
     await _db.updateMemberNameLimit(widget.groupId, w.id, name: newName);
-    if (canEditPhone && newPhone.isNotEmpty && newPhone != (w.phone ?? '')) {
-      final err = await _db.changePendingMemberPhone(widget.groupId, w, newPhone);
-      if (err != null && mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(err)));
+    if (newPhone.isNotEmpty && newPhone != (w.phone ?? '')) {
+      if (w.joined) {
+        final sure = await _confirm(
+          'تغيير رقم عامل منضمّ',
+          'سيتم نقل كل مصروفات وإشعارات ${w.name} إلى الرقم الجديد. لا يمكن التراجع عن هذا تلقائيًا. متابعة؟',
+        );
+        if (sure != true || !mounted) return;
+        final err = await _db.changeJoinedMemberPhone(widget.groupId, w, newPhone);
+        if (err != null && mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(err)));
+        }
+      } else {
+        final err =
+            await _db.changePendingMemberPhone(widget.groupId, w, newPhone);
+        if (err != null && mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(err)));
+        }
       }
     }
-    await _load();
+    if (mounted) await _load();
+  }
+
+  /// Access-rights toggle for a worker — same DatabaseService.updateMemberPermissions
+  /// family members already get in members_screen.dart. Reports aren't part of
+  /// this: a worker's own تقاريري is always scoped to just their own
+  /// transactions, so there's nothing privacy-sensitive to gate (the family
+  /// member reports toggle was removed for the same reason).
+  Future<void> _showWorkerPermissionsDialog(UserModel w) async {
+    var canAddExpenses = w.canAddExpenses;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('صلاحيات — ${w.name}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile(
+                title: const Text('تسجيل المصاريف بالصوت/الكتابة'),
+                value: canAddExpenses,
+                onChanged: (v) => setDialogState(() => canAddExpenses = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('إلغاء')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('حفظ')),
+          ],
+        ),
+      ),
+    );
+    if (saved == true) {
+      await _db.updateMemberPermissions(
+        widget.groupId,
+        w.id,
+        canAddExpenses: canAddExpenses,
+      );
+      if (mounted) await _load();
+    }
   }
 
   Future<void> _addWorkerDialog(TeamModel team) async {
@@ -507,11 +658,22 @@ class _TeamsScreenState extends State<TeamsScreen> {
       byPhone: user?.phone,
     );
     if (!mounted) return;
+    final successMsg = withdraw
+        ? 'تم سحب ${_money.format(amount)} ج من ${worker.name}'
+        : 'تم تمويل ${worker.name} بـ ${_money.format(amount)} ج';
+    if (error == null && user != null) {
+      await _db.notifyMultiple(
+        widget.groupId,
+        title: 'حركة مالية',
+        body: successMsg,
+        actorId: user.id,
+        actorName: user.name,
+        targetUserIds: [user.id, worker.id],
+      );
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(error ??
-          (withdraw
-              ? 'تم سحب ${_money.format(amount)} ج من ${worker.name}'
-              : 'تم تمويل ${worker.name} بـ ${_money.format(amount)} ج')),
+      content: Text(error ?? successMsg),
     ));
     await _load();
   }
@@ -632,19 +794,17 @@ class _TeamsScreenState extends State<TeamsScreen> {
       byPhone: user?.phone,
     );
     if (user != null) {
-      await _db.addFamilyNotification(FamilyNotificationModel(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        groupId: widget.groupId,
+      await _db.notifyMultiple(
+        widget.groupId,
         title: 'حذف مصروف فريق ${team.name}',
         body:
             '${user.name} حذف ${_money.format(txn.amount)} ج - ${txn.category}',
         actorId: user.id,
         actorName: user.name,
-        timestamp: DateTime.now(),
         targetUserIds: <String>{team.ownerId, user.id, ...team.memberIds}
             .where((id) => id.isNotEmpty)
             .toList(),
-      ));
+      );
     }
     await _load();
   }
@@ -657,35 +817,6 @@ class _TeamsScreenState extends State<TeamsScreen> {
     if (ok != true) return;
     await _db.deleteTeam(widget.groupId, team.id);
     await _load();
-  }
-
-  Future<void> _showMemberTeamDetails(TeamModel team, String memberName) async {
-    final txns = (_teamTxns[team.id] ?? const <TransactionModel>[])
-        .where((txn) => txn.userName == memberName)
-        .toList();
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text('$memberName في ${team.name}',
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            for (final txn in txns)
-              ListTile(
-                leading: const Icon(Icons.receipt_long_rounded),
-                title: Text(txn.category),
-                subtitle:
-                    Text(DateFormat('yyyy/MM/dd - HH:mm').format(txn.date)),
-                trailing: Text('${_money.format(txn.amount)} ج'),
-              ),
-          ],
-        ),
-      ),
-    );
   }
 
   Future<void> _inviteWorker(TeamModel team, UserModel worker) async {

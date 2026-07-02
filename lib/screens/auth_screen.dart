@@ -459,13 +459,6 @@ class _AuthScreenState extends State<AuthScreen> {
           );
         }),
         const SizedBox(height: 4),
-        TextButton.icon(
-          onPressed: _busy ? null : () => _promptReconnectAdmin(auth, memberships),
-          icon: const Icon(Icons.manage_accounts_rounded,
-              color: Colors.white70, size: 18),
-          label: const Text('عائلتك بلا قائد؟ استعد حساب القائد',
-              style: TextStyle(color: Colors.white70, fontSize: 13)),
-        ),
         TextButton(
           onPressed:
               _busy ? null : () => setState(() => _creatingFamily = true),
@@ -694,100 +687,6 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!mounted || code == null || code.isEmpty) return;
     setState(() => _inviteCode = code.toUpperCase());
     _loadInviteFamilyName();
-  }
-
-  /// Reconnect the family's DESIGNATED admin row (`families.adminId`) to this
-  /// Google login — keyed off adminId, never by phone-guessing or by promoting
-  /// some member. Scenario A: the row exists → rebind it. Scenario B: the
-  /// pointer dangles → recreate the row. Reports which, and touches no other
-  /// member row.
-  Future<void> _promptReconnectAdmin(
-      AuthProvider auth, List<FamilyMembership> memberships) async {
-    if (memberships.isEmpty) {
-      _snack('سجّل الدخول أولاً.');
-      return;
-    }
-    var target = memberships.first;
-    if (memberships.length > 1) {
-      final chosen = await showDialog<FamilyMembership>(
-        context: context,
-        builder: (ctx) => SimpleDialog(
-          title: const Text('أي عائلة؟'),
-          children: memberships
-              .map((m) => SimpleDialogOption(
-                    onPressed: () => Navigator.pop(ctx, m),
-                    child: Text(m.group.name),
-                  ))
-              .toList(),
-        ),
-      );
-      if (!mounted || chosen == null) return;
-      target = chosen;
-    }
-    final adminId = target.group.adminId;
-    if (adminId.trim().isEmpty) {
-      _snack('لا يوجد معرّف قائد لهذه العائلة.');
-      return;
-    }
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('استعادة حساب القائد'),
-        content: Text(
-            'سأعيد ربط حساب قائد عائلة "${target.group.name}" بدخولك الحالي.\n'
-            'لن يتغيّر أي حساب آخر، ولن يُدمج أو يُحذف شيء.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('استعادة')),
-        ],
-      ),
-    );
-    if (!mounted || ok != true) return;
-    setState(() => _busy = true);
-    final res = await auth.reconnectAdmin(target.group.id, adminId);
-    if (!mounted) return;
-    if (res.error != null) {
-      setState(() => _busy = false);
-      _snack(res.error!);
-      return;
-    }
-    final err = await auth.openMembershipById(target.group.id, adminId);
-    if (!mounted) return;
-    setState(() => _busy = false);
-    if (err != null) {
-      _snack(err);
-      return;
-    }
-    final String outcome;
-    if (res.recreated) {
-      outcome = 'لم يكن هناك حساب قائد فعلي (المؤشّر كان معلّقًا)، فأنشأت حساب '
-          'القائد وربطته بدخولك.';
-    } else if (res.wasWorker) {
-      outcome = 'كان حساب القائد قد تحوّل إلى "عامل" (لأن عاملًا أُنشئ بنفس رقم '
-          'هاتفك فأخذ نفس السجل). أعدته قائدًا للعائلة وأزلت صفة العامل وربطته '
-          'بدخولك.\n\nملاحظة: إن أردت ذلك العامل، أضِفه من جديد برقم هاتف مختلف.';
-    } else {
-      outcome =
-          'كان حساب القائد موجودًا، وأعدت ربطه بدخولك — دون تغيير أي حساب آخر.';
-    }
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تمت الاستعادة'),
-        content: Text(outcome),
-        actions: [
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('دخول')),
-        ],
-      ),
-    );
-    if (!mounted) return;
-    _goToChat();
   }
 
   /// Recovery for a login that doesn't see all of its families/slots: enter the

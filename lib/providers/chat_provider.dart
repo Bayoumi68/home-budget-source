@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
+import '../models/category_model.dart';
 import '../models/chat_message_model.dart';
+import '../models/resolved_expense.dart';
 import '../models/transaction_model.dart';
 import '../models/user_model.dart';
 import '../models/family_notification_model.dart';
@@ -12,6 +14,7 @@ import '../models/team_model.dart';
 import '../services/database_service.dart';
 import '../services/ai_service.dart';
 import '../utils/category_utils.dart';
+import '../utils/expense_description.dart';
 
 class ChatProvider extends ChangeNotifier {
   final DatabaseService _db = DatabaseService();
@@ -67,20 +70,25 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Thin wrapper: resolve, then commit straight to the team (no confirm
+  /// dialog here — team_member_home_screen.dart shows one before calling this
+  /// with the user's possibly-edited categories via commitResolvedExpenses).
   Future<String?> sendTeamExpenseText(
     String groupId,
     UserModel user,
     String text,
     TeamModel team,
   ) async {
-    final results = AIService.parseExpenseMessages(text)
-        .where((item) => item['isExpense'] == true)
+    final categoryModels = await _db.getCategoriesSync(groupId);
+    final resolved = (await resolveExpenseMessages(groupId, text, user,
+            categories: categoryModels))
+        .where((r) => r.isExpense)
         .toList();
-    if (results.isEmpty) {
+    if (resolved.isEmpty) {
       return 'اكتب مصروف واضح للفريق مثل: دفعت 100 بنزين';
     }
-    final totalExpense = results.fold<double>(
-        0, (sum, item) => sum + (item['amount'] as double));
+    final totalExpense =
+        resolved.fold<double>(0, (sum, r) => sum + r.amount);
     // Teams have no pot: the member spends from their OWN wallet.
     WalletModel? wallet;
     try {
@@ -94,22 +102,283 @@ class ChatProvider extends ChangeNotifier {
     if (wallet != null && totalExpense > wallet.balance + 0.005) {
       return 'الرصيد غير كافٍ في محفظتك. المتاح ${wallet.balance.toStringAsFixed(0)} ج.';
     }
+    return commitResolvedExpenses(groupId, user, text, resolved,
+        wallet: wallet, team: team);
+  }
+
+  /// Parses [text] into candidate expenses/income and runs the SAME
+  /// hard-match-against-live-data step ([_applyStoredMatches]) that saving
+  /// uses — with NO writes. Called by both the pre-send confirm dialog and the
+  /// actual commit, so what the user confirms is guaranteed to be what saves.
+  Future<List<ResolvedExpense>> resolveExpenseMessages(
+    String groupId,
+    String text,
+    UserModel user, {
+    required List<CategoryModel> categories,
+  }) async {
+    final aiResults = AIService.parseExpenseMessages(text,
+        categories: categories);
+    if (aiResults.isEmpty) return const [];
+
     try {
-      final categories = await _db.getExpenseCategoriesSync(groupId);
+      final categoryNames =
+          categories.where((c) => !c.isIncome).map((c) => c.name).toList();
       final budgets = await _db.getBudgetsSync(groupId);
       final members = await _db.getMembersSync(groupId);
-      for (final result in results) {
-        _applyStoredMatches(
-          result,
-          (result['note'] as String?) ?? text,
-          categories,
-          budgets,
-          members,
+      final learned = await _db.getLearnedKeywordsSync(groupId);
+      for (final result in aiResults) {
+        if (result['isExpense'] == true) {
+          _applyStoredMatches(
+            result,
+            (result['note'] as String?) ?? text,
+            categoryNames,
+            budgets,
+            members,
+            learned: learned,
+          );
+        }
+      }
+    } catch (_) {
+      // Keep the offline save path open even if matching data is not cached.
+    }
+
+    // Soft red flag (not a block): the combined total across every resolved
+    // item in this message decides over-cap, matching the pre-refactor logic.
+    final totalExpense = aiResults
+        .where((r) => r['isExpense'] == true)
+        .fold<double>(0, (sum, r) => sum + (r['amount'] as double));
+    final overCapAll = user.monthlyLimit > 0 &&
+        user.currentSpending + totalExpense > user.monthlyLimit;
+
+    return aiResults.map((r) {
+      final categoryName = r['category'] as String;
+      final match = categories.firstWhere(
+        (c) => c.name == categoryName,
+        orElse: () => CategoryModel(id: '', name: categoryName),
+      );
+      return ResolvedExpense(
+        amount: r['amount'] as double,
+        isExpense: r['isExpense'] as bool,
+        note: (r['note'] as String?) ?? text,
+        category: categoryName,
+        categoryId: match.id.isEmpty ? null : match.id,
+        overCap: (r['isExpense'] == true) && overCapAll,
+        targetUserId: r['targetUserId'] as String?,
+        targetUserName: r['targetUserName'] as String?,
+      );
+    }).toList();
+  }
+
+  /// Writes already-resolved (and possibly user-edited) expenses/income:
+  /// permission check, message + transaction + wallet-ledger debit,
+  /// notification, and the confirmation system message — for 1..N items,
+  /// either into the family chat feed or (if [team] is set) a team's own
+  /// transactions with no chat-feed message.
+  Future<String?> commitResolvedExpenses(
+    String groupId,
+    UserModel user,
+    String originalText,
+    List<ResolvedExpense> items, {
+    WalletModel? wallet,
+    TeamModel? team,
+    String? targetUserId,
+    ChatMessage? replyTo,
+  }) async {
+    if (items.isEmpty) return null;
+    final hasExpense = items.any((r) => r.isExpense);
+    if (hasExpense && !user.canAddExpenses) {
+      final warning =
+          '⛔ ليس لديك صلاحية تسجيل مصروفات. اطلب من قائد العائلة تفعيلها.';
+      await _sendSystemMessage(groupId, warning);
+      await refreshMessages(groupId);
+      return warning;
+    }
+
+    if (team != null && hasExpense) {
+      return _commitTeamResolvedExpenses(groupId, user, originalText, items,
+          wallet: wallet, team: team);
+    }
+
+    final isSingle = items.length == 1;
+    for (final item in items) {
+      final transactionId = _uuid.v4();
+      final description = buildExpenseDescription(
+        rawText: item.note,
+        categoryName: item.category,
+      );
+      final message = ChatMessage(
+        id: _uuid.v4(),
+        groupId: groupId,
+        senderId: user.id,
+        senderName: user.name,
+        senderAvatar: user.photoUrl,
+        type: MessageType.expense,
+        content: buildExpenseBubbleContent(
+          isExpense: item.isExpense,
+          amount: item.amount,
+          rawText: item.note,
+        ),
+        amount: item.amount,
+        category: item.category,
+        transactionId: transactionId,
+        timestamp: DateTime.now(),
+        overCap: item.overCap,
+        targetUserId: isSingle ? targetUserId : null,
+        replyToId: isSingle ? replyTo?.id : null,
+        replyToSender: isSingle ? replyTo?.senderName : null,
+        replyToText: isSingle && replyTo != null ? _replyPreview(replyTo) : null,
+      );
+      await _db.sendMessage(message);
+
+      final transactionUserId = item.targetUserId ?? user.id;
+      final transactionUserName = item.targetUserName ?? user.name;
+      await _db.recordTransaction(
+        TransactionModel(
+          id: transactionId,
+          groupId: groupId,
+          userId: transactionUserId,
+          userName: transactionUserName,
+          amount: item.amount,
+          category: item.category,
+          categoryId: item.categoryId,
+          isExpense: item.isExpense,
+          note: item.note,
+          walletId: item.isExpense ? wallet?.id : null,
+          walletName: item.isExpense ? wallet?.name : null,
+          overCap: item.overCap,
+          description: description,
+        ),
+        wallet: item.isExpense ? wallet : null,
+        byName: user.name,
+        byPhone: user.phone,
+      );
+    }
+
+    if (isSingle) {
+      final item = items.first;
+      final targetName = item.targetUserName ?? user.name;
+      final title = item.isExpense ? 'مصروف جديد' : 'دخل جديد';
+      final body =
+          '$targetName: ${item.amount.toStringAsFixed(0)} ج — ${item.category}';
+      await _db.addFamilyNotification(FamilyNotificationModel(
+        id: _uuid.v4(),
+        groupId: groupId,
+        title: title,
+        body: body,
+        actorId: user.id,
+        actorName: user.name,
+        timestamp: DateTime.now(),
+      ));
+      try {
+        final savedTxns = await _db.getTransactionsSync(groupId);
+        final monthExpenses = savedTxns
+            .where((t) => t.isExpense && CategoryUtils.isThisMonth(t.date))
+            .fold<double>(0.0, (sum, t) => sum + t.amount);
+        await _sendSystemMessage(
+          groupId,
+          '✅ تم حفظ المصروف في سجل الحسابات الحقيقي:\n${_formatResolvedText(item)}\nعدد العمليات المحفوظة الآن: ${savedTxns.length}\nإجمالي مصروفات الشهر: ${monthExpenses.toStringAsFixed(0)} ج',
+        );
+      } catch (_) {
+        await _sendSystemMessage(
+          groupId,
+          'تم حفظ المصروف على هذا الجهاز، وسيظهر لباقي العائلة تلقائيًا عند رجوع الإنترنت.',
         );
       }
+    } else {
+      await _db.addFamilyNotification(FamilyNotificationModel(
+        id: _uuid.v4(),
+        groupId: groupId,
+        title: 'بنود جديدة',
+        body: 'تم تسجيل ${items.length} بنود من ${user.name}',
+        actorId: user.id,
+        actorName: user.name,
+        timestamp: DateTime.now(),
+      ));
+      final total =
+          items.where((r) => r.isExpense).fold<double>(0, (sum, r) => sum + r.amount);
+      await _sendSystemMessage(
+        groupId,
+        'تم تسجيل ${items.length} مصروفات بإجمالي ${total.toStringAsFixed(total.truncateToDouble() == total ? 0 : 2)} ج',
+      );
+    }
+
+    try {
+      _messages = await _db.getMessagesSync(groupId);
     } catch (_) {}
-    return _sendTeamParsedEntries(groupId, user, text, results,
-        team: team, wallet: wallet);
+    notifyListeners();
+    return null;
+  }
+
+  /// Team-branch of [commitResolvedExpenses]: transactions only, no chat-feed
+  /// message (teams have their own transaction list, not the family feed).
+  Future<String?> _commitTeamResolvedExpenses(
+    String groupId,
+    UserModel user,
+    String originalText,
+    List<ResolvedExpense> items, {
+    required TeamModel team,
+    WalletModel? wallet,
+  }) async {
+    var savedCount = 0;
+    var total = 0.0;
+    for (final item in items.where((r) => r.isExpense)) {
+      final transactionId = _uuid.v4();
+      final description = buildExpenseDescription(
+        rawText: item.note,
+        categoryName: item.category,
+      );
+      await _db.recordTransaction(
+        TransactionModel(
+          id: transactionId,
+          groupId: groupId,
+          userId: user.id,
+          userName: user.name,
+          amount: item.amount,
+          category: item.category,
+          categoryId: item.categoryId,
+          isExpense: true,
+          note: item.note,
+          walletId: wallet?.id,
+          walletName: wallet?.name,
+          teamId: team.id,
+          teamName: team.name,
+          description: description,
+        ),
+        wallet: wallet,
+        byName: user.name,
+        byPhone: user.phone,
+      );
+      savedCount++;
+      total += item.amount;
+    }
+
+    final recipients = <String>{
+      team.ownerId,
+      user.id,
+      ...team.memberIds,
+    }.where((id) => id.trim().isNotEmpty).toList();
+    await _db.addFamilyNotification(FamilyNotificationModel(
+      id: _uuid.v4(),
+      groupId: groupId,
+      title: 'مصروف فريق ${team.name}',
+      body:
+          '${user.name}: ${total.toStringAsFixed(0)} ج في $savedCount بند. اضغط على الفرق لمراجعة التفاصيل.',
+      actorId: user.id,
+      actorName: user.name,
+      timestamp: DateTime.now(),
+      targetUserIds: recipients,
+    ));
+
+    notifyListeners();
+    return null;
+  }
+
+  String _formatResolvedText(ResolvedExpense item) {
+    final prefix = item.isExpense ? 'مصروف' : 'دخل';
+    final amountText = item.amount.truncateToDouble() == item.amount
+        ? item.amount.toStringAsFixed(0)
+        : item.amount.toStringAsFixed(2);
+    return '$prefix $amountText ج — ${item.category}';
   }
 
   @override
@@ -152,12 +421,6 @@ class ChatProvider extends ChangeNotifier {
 
     final reportRequest = AIService.parseReportRequest(text);
     if (reportRequest != null) {
-      if (!user.canViewReports) {
-        final warning = '⛔ ليس لديك صلاحية عرض التقارير.';
-        await _sendSystemMessage(groupId, warning);
-        await refreshMessages(groupId);
-        return warning;
-      }
       await _db.sendMessage(ChatMessage(
         id: _uuid.v4(),
         groupId: groupId,
@@ -201,158 +464,36 @@ class ChatProvider extends ChangeNotifier {
       return null;
     }
 
-    final aiResults = AIService.parseExpenseMessages(text);
-    if (aiResults.length > 1) {
-      return _sendMultipleParsedEntries(
-        groupId,
-        user,
-        text,
-        aiResults,
-        wallet: wallet,
-        team: team,
-      );
-    }
-
-    final aiResult = aiResults.isEmpty ? null : aiResults.first;
-
-    if (aiResult != null) {
-      final isExpense = aiResult['isExpense'] as bool;
-      if (isExpense) {
-        try {
-          final categories = await _db.getExpenseCategoriesSync(groupId);
-          final budgets = await _db.getBudgetsSync(groupId);
-          final members = await _db.getMembersSync(groupId);
-          final learned = await _db.getLearnedKeywordsSync(groupId);
-          _applyStoredMatches(aiResult, text, categories, budgets, members,
-              learned: learned);
-        } catch (_) {
-          // Keep the offline save path open even if matching data is not cached.
-        }
-      }
-      final amount = aiResult['amount'] as double;
-
-      if (isExpense && !user.canAddExpenses) {
-        final warning =
-            '⛔ ليس لديك صلاحية تسجيل مصروفات. اطلب من قائد العائلة تفعيلها.';
-        await _sendSystemMessage(groupId, warning);
-        await refreshMessages(groupId);
-        return warning;
-      }
-
-      // Monthly cap is a soft RED flag, not a block: the expense still posts
-      // but is marked over-cap for both admin and member to see.
-      final overCap = isExpense &&
-          user.monthlyLimit > 0 &&
-          user.currentSpending + amount > user.monthlyLimit;
-      aiResult['overCap'] = overCap;
-    }
-
-    if (aiResult != null && team != null && aiResult['isExpense'] == true) {
-      await _sendTeamParsedEntries(
-        groupId,
-        user,
-        text,
-        [aiResult],
-        wallet: wallet,
-        team: team,
-      );
-      return null;
-    }
-
-    final transactionId = aiResult != null ? _uuid.v4() : null;
-    final message = ChatMessage(
-      id: _uuid.v4(),
-      groupId: groupId,
-      senderId: user.id,
-      senderName: user.name,
-      senderAvatar: user.photoUrl,
-      type: aiResult != null ? MessageType.expense : MessageType.text,
-      content: aiResult != null ? _formatExpenseText(aiResult) : text,
-      amount: aiResult?['amount'] as double?,
-      category: aiResult?['category'] as String?,
-      transactionId: transactionId,
-      timestamp: DateTime.now(),
-      overCap: aiResult?['overCap'] == true,
-      targetUserId: aiResult == null ? targetUserId : null,
-      replyToId: replyTo?.id,
-      replyToSender: replyTo?.senderName,
-      replyToText: replyTo == null ? null : _replyPreview(replyTo),
-    );
-    await _db.sendMessage(message);
-
-    if (aiResult != null && transactionId != null) {
-      final transactionUserId =
-          (aiResult['targetUserId'] as String?) ?? user.id;
-      final transactionUserName =
-          (aiResult['targetUserName'] as String?) ?? user.name;
-      final isExpense = aiResult['isExpense'] as bool;
-      final amount = aiResult['amount'] as double;
-      final transaction = TransactionModel(
-        id: transactionId,
-        groupId: groupId,
-        userId: transactionUserId,
-        userName: transactionUserName,
-        amount: amount,
-        category: aiResult['category'] as String,
-        isExpense: isExpense,
-        note: aiResult['note'] as String?,
-        walletId: isExpense ? wallet?.id : null,
-        walletName: isExpense ? wallet?.name : null,
-        overCap: aiResult['overCap'] == true,
-      );
-      await _db.addTransaction(transaction);
-      if (isExpense && wallet != null) {
-        await _db.applyWalletDelta(
-          groupId,
-          wallet.id,
-          -amount,
-          source: 'expense',
-          note: aiResult['category'] as String?,
-          refTransactionId: transactionId,
-          byName: user.name,
-          byPhone: user.phone,
-        );
-      }
-
-      final category = aiResult['category'] as String;
-      final title = isExpense ? 'مصروف جديد' : 'دخل جديد';
-      final body =
-          '${transactionUserName}: ${amount.toStringAsFixed(0)} ج — $category';
-      await _db.addFamilyNotification(FamilyNotificationModel(
+    // Thin wrapper over resolve+commit (no confirm dialog here — chat_screen.dart
+    // shows the mandatory confirm dialog itself and calls commitResolvedExpenses
+    // directly for its own send flow; this path stays as a self-contained
+    // fallback for any other caller of sendTextMessage).
+    final categoryModels = await _db.getCategoriesSync(groupId);
+    final resolved = await resolveExpenseMessages(groupId, text, user,
+        categories: categoryModels);
+    if (resolved.isEmpty) {
+      await _db.sendMessage(ChatMessage(
         id: _uuid.v4(),
         groupId: groupId,
-        title: title,
-        body: body,
-        actorId: user.id,
-        actorName: user.name,
+        senderId: user.id,
+        senderName: user.name,
+        senderAvatar: user.photoUrl,
+        type: MessageType.text,
+        content: text,
         timestamp: DateTime.now(),
+        targetUserId: targetUserId,
+        replyToId: replyTo?.id,
+        replyToSender: replyTo?.senderName,
+        replyToText: replyTo == null ? null : _replyPreview(replyTo),
       ));
-
       try {
-        final savedTxns = await _db.getTransactionsSync(groupId);
-        final monthExpenses = savedTxns
-            .where((t) =>
-                t.isExpense &&
-                t.date.year == DateTime.now().year &&
-                t.date.month == DateTime.now().month)
-            .fold<double>(0.0, (sum, t) => sum + t.amount);
-        await _sendSystemMessage(
-          groupId,
-          '✅ تم حفظ المصروف في سجل الحسابات الحقيقي:\n${_formatExpenseText(aiResult)}\nعدد العمليات المحفوظة الآن: ${savedTxns.length}\nإجمالي مصروفات الشهر: ${monthExpenses.toStringAsFixed(0)} ج',
-        );
-      } catch (_) {
-        await _sendSystemMessage(
-          groupId,
-          'تم حفظ المصروف على هذا الجهاز، وسيظهر لباقي العائلة تلقائيًا عند رجوع الإنترنت.',
-        );
-      }
+        _messages = await _db.getMessagesSync(groupId);
+      } catch (_) {}
+      notifyListeners();
+      return null;
     }
-
-    try {
-      _messages = await _db.getMessagesSync(groupId);
-    } catch (_) {}
-    notifyListeners();
-    return null;
+    return commitResolvedExpenses(groupId, user, text, resolved,
+        wallet: wallet, team: team, targetUserId: targetUserId, replyTo: replyTo);
   }
 
   /// Cash into a wallet (a top-up): DR the wallet ledger and update its
@@ -561,193 +702,6 @@ class ChatProvider extends ChangeNotifier {
     await _db.sendMessage(systemMsg);
   }
 
-  Future<String?> _sendMultipleParsedEntries(String groupId, UserModel user,
-      String originalText, List<Map<String, dynamic>> results,
-      {WalletModel? wallet, TeamModel? team}) async {
-    final hasExpense = results.any((r) => r['isExpense'] == true);
-    if (hasExpense && !user.canAddExpenses) {
-      final warning =
-          '⛔ ليس لديك صلاحية تسجيل مصروفات. اطلب من قائد العائلة تفعيلها.';
-      await _sendSystemMessage(groupId, warning);
-      await refreshMessages(groupId);
-      return warning;
-    }
-
-    try {
-      final categories = await _db.getExpenseCategoriesSync(groupId);
-      final budgets = await _db.getBudgetsSync(groupId);
-      final members = await _db.getMembersSync(groupId);
-      for (final result in results) {
-        if (result['isExpense'] == true) {
-          _applyStoredMatches(
-            result,
-            (result['note'] as String?) ?? originalText,
-            categories,
-            budgets,
-            members,
-          );
-        }
-      }
-    } catch (_) {
-      // Keep the offline save path open even if matching data is not cached.
-    }
-
-    final totalExpense = results
-        .where((r) => r['isExpense'] == true)
-        .fold<double>(0, (sum, r) => sum + (r['amount'] as double));
-    // Soft red flag (not a block): mark over-cap, still post.
-    final overCapAll = hasExpense &&
-        user.monthlyLimit > 0 &&
-        user.currentSpending + totalExpense > user.monthlyLimit;
-
-    if (team != null && hasExpense) {
-      return _sendTeamParsedEntries(
-        groupId,
-        user,
-        originalText,
-        results,
-        wallet: wallet,
-        team: team,
-      );
-    }
-
-    for (final result in results) {
-      final transactionId = _uuid.v4();
-      final transactionUserId = (result['targetUserId'] as String?) ?? user.id;
-      final transactionUserName =
-          (result['targetUserName'] as String?) ?? user.name;
-      final message = ChatMessage(
-        id: _uuid.v4(),
-        groupId: groupId,
-        senderId: user.id,
-        senderName: user.name,
-        senderAvatar: user.photoUrl,
-        type: MessageType.expense,
-        content: _formatExpenseText(result),
-        amount: result['amount'] as double,
-        category: result['category'] as String,
-        transactionId: transactionId,
-        timestamp: DateTime.now(),
-        overCap: (result['isExpense'] == true) && overCapAll,
-      );
-      await _db.sendMessage(message);
-      final isExpense = result['isExpense'] as bool;
-      final amount = result['amount'] as double;
-      await _db.addTransaction(TransactionModel(
-        id: transactionId,
-        groupId: groupId,
-        userId: transactionUserId,
-        userName: transactionUserName,
-        amount: amount,
-        overCap: isExpense && overCapAll,
-        category: result['category'] as String,
-        isExpense: isExpense,
-        note: result['note'] as String?,
-        walletId: isExpense ? wallet?.id : null,
-        walletName: isExpense ? wallet?.name : null,
-      ));
-      if (isExpense && wallet != null) {
-        await _db.applyWalletDelta(
-          groupId,
-          wallet.id,
-          -amount,
-          source: 'expense',
-          note: result['category'] as String?,
-          refTransactionId: transactionId,
-          byName: user.name,
-          byPhone: user.phone,
-        );
-      }
-    }
-
-    await _db.addFamilyNotification(FamilyNotificationModel(
-      id: _uuid.v4(),
-      groupId: groupId,
-      title: 'بنود جديدة',
-      body: 'تم تسجيل ${results.length} بنود من ${user.name}',
-      actorId: user.id,
-      actorName: user.name,
-      timestamp: DateTime.now(),
-    ));
-
-    final total = results
-        .where((r) => r['isExpense'] == true)
-        .fold<double>(0, (sum, r) => sum + (r['amount'] as double));
-    await _sendSystemMessage(
-      groupId,
-      'تم تسجيل ${results.length} مصروفات بإجمالي ${total.toStringAsFixed(total.truncateToDouble() == total ? 0 : 2)} ج',
-    );
-
-    _messages = await _db.getMessagesSync(groupId);
-    notifyListeners();
-    return null;
-  }
-
-  Future<String?> _sendTeamParsedEntries(
-    String groupId,
-    UserModel user,
-    String originalText,
-    List<Map<String, dynamic>> results, {
-    required TeamModel team,
-    WalletModel? wallet,
-  }) async {
-    var savedCount = 0;
-    var total = 0.0;
-    for (final result in results.where((r) => r['isExpense'] == true)) {
-      final transactionId = _uuid.v4();
-      final amount = result['amount'] as double;
-      final transaction = TransactionModel(
-        id: transactionId,
-        groupId: groupId,
-        userId: user.id,
-        userName: user.name,
-        amount: amount,
-        category: result['category'] as String,
-        isExpense: true,
-        note: result['note'] as String? ?? originalText,
-        walletId: wallet?.id,
-        walletName: wallet?.name,
-        teamId: team.id,
-        teamName: team.name,
-      );
-      await _db.addTransaction(transaction);
-      if (wallet != null) {
-        await _db.applyWalletDelta(
-          groupId,
-          wallet.id,
-          -amount,
-          source: 'expense',
-          note: result['category'] as String?,
-          refTransactionId: transactionId,
-          byName: user.name,
-          byPhone: user.phone,
-        );
-      }
-      savedCount++;
-      total += amount;
-    }
-
-    final recipients = <String>{
-      team.ownerId,
-      user.id,
-      ...team.memberIds,
-    }.where((id) => id.trim().isNotEmpty).toList();
-    await _db.addFamilyNotification(FamilyNotificationModel(
-      id: _uuid.v4(),
-      groupId: groupId,
-      title: 'مصروف فريق ${team.name}',
-      body:
-          '${user.name}: ${total.toStringAsFixed(0)} ج في $savedCount بند. اضغط على الفرق لمراجعة التفاصيل.',
-      actorId: user.id,
-      actorName: user.name,
-      timestamp: DateTime.now(),
-      targetUserIds: recipients,
-    ));
-
-    notifyListeners();
-    return null;
-  }
-
   void _applyStoredMatches(
     Map<String, dynamic> aiResult,
     String text,
@@ -921,14 +875,6 @@ class ChatProvider extends ChangeNotifier {
       } catch (_) {}
     }
     return AIService.matchExpenseCategoryFromList(matchedCategory, names);
-  }
-
-  String _formatExpenseText(Map<String, dynamic> result) {
-    final amount = result['amount'] as double;
-    final category = result['category'] as String;
-    final isExpense = result['isExpense'] as bool;
-    final prefix = isExpense ? 'مصروف' : 'دخل';
-    return '$prefix ${amount.toStringAsFixed(amount.truncateToDouble() == amount ? 0 : 2)} ج — $category';
   }
 }
 

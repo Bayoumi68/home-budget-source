@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/theme.dart';
-import '../config/constants.dart';
 import '../models/chat_message_model.dart';
+import '../models/category_model.dart';
 import '../providers/avatar_provider.dart';
+import '../providers/budget_provider.dart';
 
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
@@ -159,7 +160,7 @@ class ChatBubble extends StatelessWidget {
                         isDeleted
                             ? '🗑️ ${message.content}'
                             : message.type == MessageType.expense
-                                ? '${AppConstants.categoryIcons[message.category] ?? '📌'} ${message.content}'
+                                ? '${context.watch<BudgetProvider>().categories.iconFor(message.category ?? '')} ${message.content}'
                                 : message.content,
                         style: TextStyle(fontSize: 15, color: isDeleted ? Colors.grey.shade700 : null),
                       ),
