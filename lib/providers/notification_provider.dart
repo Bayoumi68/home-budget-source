@@ -12,14 +12,18 @@ class NotificationProvider extends ChangeNotifier {
 
   List<FamilyNotificationModel> get items => _items;
 
-  /// Admin sees every family notification. A member sees only notifications
-  /// about their own activity (actor) or ones explicitly targeted to them.
+  /// The doer is never notified of their own action — only the second party
+  /// (target) is. So a notification the user authored is always filtered out,
+  /// even for the admin. Beyond that: the admin sees every other member's
+  /// activity; a member sees only notifications explicitly targeted to them.
   List<FamilyNotificationModel> get visibleItems {
     final uid = _currentUserId;
-    if (uid == null || _isAdmin) return _items;
-    return _items
-        .where((n) => n.actorId == uid || n.targetUserIds.contains(uid))
-        .toList();
+    if (uid == null) return _items;
+    return _items.where((n) {
+      if (n.actorId == uid) return false; // never notify the actor of own action
+      if (_isAdmin) return true; // admin still sees everyone else's activity
+      return n.targetUserIds.contains(uid);
+    }).toList();
   }
 
   int get unreadCount {
