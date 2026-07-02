@@ -54,9 +54,6 @@ class DefaultFirebaseOptions {
     appId: '1:229990261595:web:d9cb284151bad290d3b07e',
     messagingSenderId: '229990261595',
     projectId: 'budget-home-bayoumi',
-    // Firebase's default *.firebaseapp.com auth domain. Google specially
-    // handles this domain for sign-in across browsers (incl. Chrome on
-    // Android), unlike a custom web.app domain which broke mobile Chrome.
     authDomain: 'budget-home-bayoumi.firebaseapp.com',
     storageBucket: 'budget-home-bayoumi.firebasestorage.app',
     measurementId: 'G-0RNZB7PVNW',
@@ -64,7 +61,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBmkvJhsNmUvyxD9zepHGt79z7PbIrYP20',
-    appId: '1:229990261595:android:7d04e99f1dbf3e45d3b07e',
+    appId: '1:229990261595:android:6a7507b313761cb2d3b07e',
     messagingSenderId: '229990261595',
     projectId: 'budget-home-bayoumi',
     storageBucket: 'budget-home-bayoumi.firebasestorage.app',
