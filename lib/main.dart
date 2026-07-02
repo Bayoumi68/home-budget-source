@@ -16,7 +16,7 @@ import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/team_member_home_screen.dart';
-import 'widgets/ad_banner_slot.dart';
+import 'widgets/ad_banner_slot.dart' show AdBannerSlot;
 
 Future<void> main() async {
   runZonedGuarded(() async {
@@ -34,10 +34,6 @@ Future<void> main() async {
       );
       FirebaseFirestore.instance.settings =
           const Settings(persistenceEnabled: true);
-      // Google Mobile Ads (Android/iOS; no-op on web — AdSense loads there
-      // via its own script tag). Fire-and-forget: the banner slot shows its
-      // placeholder until the first ad fills.
-      initPlatformAds();
       runApp(const BudgetHomeApp());
     } catch (e) {
       runApp(AppStartupError(message: e.toString()));

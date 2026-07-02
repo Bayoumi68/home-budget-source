@@ -3,10 +3,10 @@ class AppConstants {
   static const String appWebLink = 'https://home-budgets.web.app';
   static const String androidDownloadLink =
       'https://home-budgets.web.app/download.html';
-  static const String appVersion = '0.5.75-app-wide-ad-banner';
+  static const String appVersion = '0.5.76-fix-launch-crash';
   // Monotonic build number, kept in sync with pubspec (+NNNN). Used to detect a
   // newer release via appConfig/latest. BUMP THIS with every release.
-  static const int appBuild = 2075;
+  static const int appBuild = 2076;
   // TESTING: when true, phone-auth uses Firebase's app-verification-disabled
   // mode + test phone numbers — no reCAPTCHA image puzzle, no real SMS. This
   // applies to release/deployed builds too, so the family can test now. Set to
@@ -14,20 +14,11 @@ class AppConstants {
   // protection is enforced.
   static const bool phoneAuthTestingMode = true;
   // ── Ads (bottom banner slot, see widgets/ad_banner_slot.dart) ──
-  // Master switch: false collapses the slot everywhere.
+  // Master switch: false collapses the slot everywhere. Currently the slot
+  // shows a placeholder — the real google_mobile_ads SDK crashed the app on
+  // launch on-device and was rolled back; re-enabling it needs a tethered
+  // phone to read the native crash first (see ad_banner_slot.dart).
   static const bool adBannerEnabled = true;
-  // Android AdMob banner unit. THIS IS GOOGLE'S OFFICIAL TEST ID — it serves
-  // real (test-labeled) ads safely today. Before launch: create an AdMob
-  // account, register the app, then replace this AND the APPLICATION_ID
-  // meta-data in android/app/src/main/AndroidManifest.xml.
-  static const String adMobBannerUnitId =
-      'ca-app-pub-3940256099942544/6300978111';
-  // Web AdSense: Google offers NO test mode for web — it needs an approved
-  // AdSense account. Until then leave these empty (the slot shows the
-  // placeholder). Once approved, paste your client ('ca-pub-…') and slot ids
-  // here — the web banner goes live with no other code change.
-  static const String adSenseClientId = '';
-  static const String adSenseSlotId = '';
   static const String defaultCurrency = 'EGP';
   static const String aiAssistantName = 'مساعد العائلة';
   static const int maxFamilyMembers = 10;

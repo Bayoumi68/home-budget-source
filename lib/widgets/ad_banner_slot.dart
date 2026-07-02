@@ -1,21 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../config/constants.dart';
-import 'ad_banner_platform_io.dart'
-    if (dart.library.html) 'ad_banner_platform_web.dart';
+import 'ad_banner_placeholder.dart';
 
-export 'ad_banner_platform_io.dart'
-    if (dart.library.html) 'ad_banner_platform_web.dart' show initPlatformAds;
-
-/// The bottom ad banner on the app's main screens (family chat + worker home).
+/// Bottom ad slot, mounted app-wide (below the Navigator in main.dart) so it
+/// shows on every screen. Currently renders a neutral placeholder strip.
 ///
-/// - Android: a REAL Google AdMob banner — currently on Google's official
-///   test ids (safe, clearly-labeled test ads). Swap in your own ids in
-///   AppConstants.adMobBannerUnitId + AndroidManifest.xml to go live.
-/// - Web: activates the moment AppConstants.adSenseClientId/adSenseSlotId are
-///   set (AdSense has no test mode — it needs an approved account); until
-///   then it shows the neutral placeholder strip.
-/// - AppConstants.adBannerEnabled = false collapses the slot everywhere.
+/// Real Google ads were attempted via google_mobile_ads but the native SDK
+/// crashed the app on launch on-device, and it can't be debugged without a
+/// tethered phone to read the crash — so the SDK was rolled back to keep the
+/// app launching. To re-enable: re-add google_mobile_ads + the AdMob
+/// APPLICATION_ID manifest meta-data, then render the real banner here behind
+/// a device-verified integration.
+///
+/// [AppConstants.adBannerEnabled] = false collapses the slot everywhere.
 class AdBannerSlot extends StatelessWidget {
   const AdBannerSlot({super.key});
 
@@ -26,7 +24,7 @@ class AdBannerSlot extends StatelessWidget {
     if (!AppConstants.adBannerEnabled) return const SizedBox.shrink();
     return const SafeArea(
       top: false,
-      child: PlatformAdBanner(height: _bannerHeight),
+      child: AdBannerPlaceholder(height: _bannerHeight),
     );
   }
 }
